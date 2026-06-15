@@ -181,16 +181,30 @@ async function fetchOriginDeals(origin, stops, outboundDate, returnDate, maxPric
   } catch {
     throw new Error(`SerpApi returned an invalid response for ${origin}.`);
   }
+  if (payload.error && /empty results for departure_id/i.test(payload.error)) {
+    return { origin, travelDuration, deals: [], empty: true };
+  }
   if (!apiResponse.ok || payload.error) {
     throw new Error(payload.error || `Live search failed for ${origin}.`);
   }
   if (Array.isArray(payload.destinations)) {
-    return payload.destinations.map((item, index) => mapDestination(item, index, origin, outboundDate, returnDate));
+    return {
+      origin,
+      travelDuration,
+      deals: payload.destinations.map((item, index) => mapDestination(item, index, origin, outboundDate, returnDate)),
+      empty: payload.destinations.length === 0,
+    };
   }
   if (arrival && Array.isArray(payload.flights)) {
-    return payload.flights.map((item, index) => mapSpecificFlight(item, index, origin, outboundDate, returnDate, arrival, payload.google_flights_link, travelDuration, payload.start_date, payload.end_date));
+    return {
+      origin,
+      travelDuration,
+      deals: payload.flights.map((item, index) => mapSpecificFlight(item, index, origin, outboundDate, returnDate, arrival, payload.google_flights_link, travelDuration, payload.start_date, payload.end_date)),
+      empty: payload.flights.length === 0,
+    };
   }
-  return (payload.results || []).map((item, index) => mapDestination(item, index, origin, outboundDate, returnDate));
+  const deals = (payload.results || []).map((item, index) => mapDestination(item, index, origin, outboundDate, returnDate));
+  return { origin, travelDuration, deals, empty: deals.length === 0 };
 }
 
 async function searchLocations(requestUrl, response) {
@@ -267,8 +281,9 @@ async function exploreFlights(requestUrl, response) {
   const origins = origin === "ALL" ? ["PEN", "KUL"] : [origin];
   const searches = origins.flatMap((code) => durationGroups.map((duration) => fetchOriginDeals(code, stops, outboundDate, returnDate, maxPrice, month, duration, arrival)));
   const results = await Promise.allSettled(searches);
-  const successful = results.filter((result) => result.status === "fulfilled").flatMap((result) => result.value);
-  if (successful.length === 0) {
+  const fulfilled = results.filter((result) => result.status === "fulfilled").map((result) => result.value);
+  const successful = fulfilled.flatMap((result) => result.deals);
+  if (fulfilled.length === 0) {
     const reason = results.find((result) => result.status === "rejected")?.reason?.message;
     return sendJson(response, 502, { error: reason || "Live fare search failed. Please try again." });
   }
@@ -317,11 +332,25 @@ async function exploreFlights(requestUrl, response) {
     deals = deals.map((deal, index) => ({ ...deal, weather: forecasts[index] }));
   }
 
+  const emptyOrigins = origins.filter((code) => !successful.some((deal) => deal.origin === code));
+  const warnings = results.filter((result) => result.status === "rejected").map((result) => result.reason?.message);
+  const originLabel = origin === "ALL" ? "Penang or Kuala Lumpur" : origin;
+  const dateLabel = travelMonth
+    ? `${travelMonth} for trips of ${minTripDays} to ${maxTripDays} days`
+    : outboundDate && returnDate
+      ? `${outboundDate} to ${returnDate}`
+      : "the selected filters";
+  const message = deals.length === 0
+    ? `No live ${arrival ? `fares to ${arrival.name}` : "worldwide fares"} are currently available from ${originLabel} for ${dateLabel}. Try another month, Anytime, Specific dates, or a wider fare range.`
+    : null;
+
   return sendJson(response, 200, {
     deals,
+    message,
     source: "SerpApi Google Travel Explore",
     retrievedAt: new Date().toISOString(),
     searchedOrigins: origins,
+    emptyOrigins,
     selectedDestination: arrival,
     fareRange: [minPrice, maxPrice],
     searchedMonth: travelMonth || null,
@@ -329,7 +358,7 @@ async function exploreFlights(requestUrl, response) {
     tripDayRangeApproximate: Boolean(travelMonth && arrival),
     weatherRequested: includeWeather,
     weatherSource: includeWeather ? "Open-Meteo" : null,
-    warnings: results.filter((result) => result.status === "rejected").map((result) => result.reason?.message),
+    warnings,
   });
 }
 

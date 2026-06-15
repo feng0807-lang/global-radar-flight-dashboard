@@ -342,16 +342,16 @@ export function App() {
       if (!response.ok) throw new Error(payload?.error || `Flight API returned ${response.status}.`);
       if (!payload) throw new Error("Flight API returned an invalid response.");
       if (!Array.isArray(payload.deals) || payload.deals.length === 0) {
-        throw new Error(selectedDestination
+        throw new Error(payload.message || (selectedDestination
           ? `No live fares found to ${selectedDestination.name} for these dates and filters. Try Anytime, Specific dates, a wider trip-day range, or a higher maximum fare.`
-          : "No live fares matched these filters. Try widening the fare range or travel dates.");
+          : "No live fares matched these filters. Try widening the fare range or travel dates."));
       }
       setDeals(payload.deals);
       if (selectedCountry !== "ALL" && !payload.deals.some((deal) => deal.country === selectedCountry)) setSelectedCountry("ALL");
       setDataMode("live");
       setApiHealth("online");
       const updatedAt = payload.retrievedAt ? new Date(payload.retrievedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
-      updateLiveStatus(`${payload.deals.length} live ${selectedDestination ? `fare${payload.deals.length === 1 ? "" : "s"} to ${selectedDestination.name}` : "destinations"} loaded${payload.tripDayRangeApproximate ? " · closest available exact dates" : ""}${updatedAt ? ` · updated ${updatedAt}` : ""}${payload.warnings?.length ? " · one airport unavailable" : ""}`, "success");
+      updateLiveStatus(`${payload.deals.length} live ${selectedDestination ? `fare${payload.deals.length === 1 ? "" : "s"} to ${selectedDestination.name}` : "destinations"} loaded${payload.tripDayRangeApproximate ? " · closest available exact dates" : ""}${updatedAt ? ` · updated ${updatedAt}` : ""}${payload.emptyOrigins?.length ? ` · no fares from ${payload.emptyOrigins.join(" or ")}` : ""}${payload.warnings?.length ? " · one airport unavailable" : ""}`, "success");
     } catch (error) {
       const isOffline = error instanceof TypeError || /failed to fetch|networkerror/i.test(error.message);
       if (isOffline) setApiHealth("offline");
