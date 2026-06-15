@@ -1,0 +1,26 @@
+# Private credentials
+.env
+.env.*
+!.env.example
+.npmrc
+
+# Dependencies and builds
+node_modules/
+dist/
+.npm-cache/
+
+# Local browser and test artifacts
+chrome-test-profile*/
+*-test.mjs
+*.png
+!public/
+!public/assets/
+!public/assets/world-map-night.png
+design-qa.md
+AGENTS.md
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
