@@ -188,4 +188,52 @@ button { cursor: pointer; }
 }
 @media (max-width: 520px) {
   .origin-switch button:first-child { display: none; }.map-panel { min-height: 360px; }.map-heading p { display: none; }.map-legend { left: 10px; bottom: 10px; gap: 7px; }.map-help { display: none; }.map-controls { right: 10px; bottom: 10px; }.zoom-level { right: 8px; bottom: 134px; }.deals-heading span { font-size: 11px; }.deals-heading h2 { font-size: 13px; }.deal-drawer > img { height: 210px; }
+  .discovery-actions { flex-wrap: wrap; }.budget-explore-button, .route-finder-button { width: 100%; }
 }
+
+/* Budget Explorer + Route Finder */
+.discovery-actions { display: flex; align-items: center; gap: 12px; padding: 14px 28px 0; }
+.budget-explore-button, .route-finder-button { display: inline-flex; align-items: center; gap: 9px; border: 0; border-radius: 999px; padding: 12px 20px; font-size: 13px; font-weight: 700; color: #071226; }
+.budget-explore-button { background: linear-gradient(120deg, var(--gold), #ffd766); box-shadow: 0 8px 22px rgba(255, 198, 46, .25); }
+.route-finder-button { background: linear-gradient(120deg, var(--teal), #6ef0e6); box-shadow: 0 8px 22px rgba(35, 201, 213, .25); }
+.budget-explore-button:disabled, .route-finder-button:disabled { opacity: .7; cursor: default; }
+.budget-quickset { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.budget-quickset span { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .6px; margin-right: 2px; }
+.budget-quickset button { border: 1px solid var(--line); background: #111c35; color: #cdd9f2; border-radius: 999px; padding: 7px 12px; font-size: 11px; font-weight: 700; }
+.budget-quickset button.active { background: var(--gold); color: #071226; border-color: var(--gold); }
+
+.budget-banner { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 0 0 14px; padding: 13px 18px; border: 1px solid var(--line); border-left: 3px solid var(--gold); border-radius: 12px; background: linear-gradient(120deg, rgba(255, 198, 46, .08), rgba(8, 17, 39, .4)); }
+.budget-banner-main { display: flex; flex-direction: column; gap: 3px; }
+.budget-banner-main span { color: var(--gold); font-size: 10px; font-weight: 700; letter-spacing: .8px; }
+.budget-banner-main strong { font: 700 17px "Barlow Condensed", sans-serif; letter-spacing: .3px; }
+.budget-banner-pick { display: flex; align-items: baseline; gap: 8px; }
+.budget-banner-pick small { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .6px; }
+.budget-banner-pick b { color: #eef4ff; font-size: 14px; }
+.budget-banner-price { color: var(--gold); font-weight: 800; font-size: 15px; }
+
+.route-drawer { position: relative; width: min(480px, 100%); max-height: 100%; overflow-y: auto; background: linear-gradient(180deg, #0b1530, #070d1f); border-left: 1px solid var(--line); padding: 26px 24px 30px; }
+.route-drawer-head { padding-right: 30px; margin-bottom: 16px; }
+.route-drawer-head .eyebrow { color: var(--teal); font-size: 11px; font-weight: 700; letter-spacing: .8px; }
+.route-drawer-head h2 { font: 800 26px/1.05 "Barlow Condensed", sans-serif; margin: 6px 0 4px; }
+.route-drawer-head p { margin: 0; color: var(--muted); font-size: 12px; }
+.route-loading { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 13px; padding: 24px 4px; }
+.route-list { display: flex; flex-direction: column; gap: 11px; }
+.route-card { border: 1px solid var(--line); border-radius: 13px; padding: 13px 15px; background: #0c1730; }
+.route-card.best { border-color: var(--teal); box-shadow: 0 0 0 1px rgba(35, 201, 213, .35), 0 10px 26px rgba(35, 201, 213, .1); }
+.route-card-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.route-path { font: 700 16px "Barlow Condensed", sans-serif; letter-spacing: 1px; color: #eef4ff; }
+.route-card-top strong { font-size: 18px; font-weight: 800; color: var(--teal); }
+.route-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 9px 0; }
+.route-tags .tag { font-size: 10px; font-weight: 700; padding: 4px 9px; border-radius: 999px; background: #16223d; color: #cdd9f2; }
+.route-tags .tag.best { background: var(--teal); color: #071226; }
+.route-tags .tag.saves { background: rgba(69, 230, 138, .16); color: #45e68a; }
+.route-tags .tag.over { background: rgba(255, 95, 98, .14); color: var(--coral); }
+.route-legs { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.route-leg { display: flex; align-items: center; justify-content: space-between; gap: 10px; text-decoration: none; padding: 8px 11px; border-radius: 9px; background: #111c35; border: 1px solid transparent; }
+.route-leg:hover { border-color: var(--teal); }
+.route-leg-path { display: flex; flex-direction: column; gap: 1px; }
+.route-leg-path b { color: #eef4ff; font-size: 13px; }
+.route-leg-path small { color: var(--muted); font-size: 10px; }
+.route-leg-price { color: #eef4ff; font-weight: 700; font-size: 13px; white-space: nowrap; }
+.route-disclaimer { display: flex; gap: 8px; margin: 6px 0 0; padding: 11px 13px; border-radius: 10px; background: rgba(255, 198, 46, .08); color: #f2dca0; font-size: 11px; line-height: 1.45; }
+.route-disclaimer .material-symbols-rounded { color: var(--gold); font-size: 17px; flex-shrink: 0; }

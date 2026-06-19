@@ -22,6 +22,43 @@ const mime = {
   ".webp": "image/webp",
 };
 
+const WORLDWIDE_FALLBACK_DESTINATIONS = [
+  { id: "BKK", name: "Bangkok (BKK)", description: "Thailand", lat: 13.7563, lon: 100.5018, image: "https://images.unsplash.com/photo-1508009603885-50cf7c579365?auto=format&fit=crop&w=700&q=85" },
+  { id: "SIN", name: "Singapore (SIN)", description: "Singapore", lat: 1.3521, lon: 103.8198, image: "https://images.unsplash.com/photo-1525625293386-3f8f99389edd?auto=format&fit=crop&w=700&q=85" },
+  { id: "SGN", name: "Ho Chi Minh City (SGN)", description: "Vietnam", lat: 10.8231, lon: 106.6297, image: "https://images.unsplash.com/photo-1583417319070-4a69db38a482?auto=format&fit=crop&w=700&q=85" },
+  { id: "DPS", name: "Bali (DPS)", description: "Indonesia", lat: -8.65, lon: 115.2167, image: "https://images.unsplash.com/photo-1537996194471-e657df975ab4?auto=format&fit=crop&w=700&q=85" },
+  { id: "MNL", name: "Manila (MNL)", description: "Philippines", lat: 14.5995, lon: 120.9842, image: "https://images.unsplash.com/photo-1518509562904-e7ef99cdcc86?auto=format&fit=crop&w=700&q=85" },
+  { id: "HKG", name: "Hong Kong (HKG)", description: "Hong Kong", lat: 22.3193, lon: 114.1694, image: "https://images.unsplash.com/photo-1536599018102-9f803c140fc1?auto=format&fit=crop&w=700&q=85" },
+  { id: "TPE", name: "Taipei (TPE)", description: "Taiwan", lat: 25.033, lon: 121.5654, image: "https://images.unsplash.com/photo-1470004914212-05527e49370b?auto=format&fit=crop&w=700&q=85" },
+  { id: "CAN", name: "Guangzhou (CAN)", description: "China", lat: 23.1291, lon: 113.2644, image: "https://images.unsplash.com/photo-1523731407965-2430cd12f5e4?auto=format&fit=crop&w=700&q=85" },
+  { id: "ICN", name: "Seoul (ICN)", description: "South Korea", lat: 37.5665, lon: 126.978, image: "https://images.unsplash.com/photo-1538485399081-7191377e8241?auto=format&fit=crop&w=700&q=85" },
+  { id: "NRT", name: "Tokyo (NRT)", description: "Japan", lat: 35.6762, lon: 139.6503, image: "https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?auto=format&fit=crop&w=700&q=85" },
+  { id: "KIX", name: "Osaka (KIX)", description: "Japan", lat: 34.6937, lon: 135.5023, image: "https://images.unsplash.com/photo-1590559899731-a382839e5549?auto=format&fit=crop&w=700&q=85" },
+  { id: "DXB", name: "Dubai (DXB)", description: "United Arab Emirates", lat: 25.2048, lon: 55.2708, image: "https://images.unsplash.com/photo-1512453979798-5ea266f8880c?auto=format&fit=crop&w=700&q=85" },
+  { id: "IST", name: "Istanbul (IST)", description: "Turkey", lat: 41.0082, lon: 28.9784, image: "https://images.unsplash.com/photo-1524231757912-21f4fe3a7200?auto=format&fit=crop&w=700&q=85" },
+  { id: "LHR", name: "London (LHR)", description: "United Kingdom", lat: 51.5074, lon: -0.1278, image: "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?auto=format&fit=crop&w=700&q=85" },
+  { id: "CDG", name: "Paris (CDG)", description: "France", lat: 48.8566, lon: 2.3522, image: "https://images.unsplash.com/photo-1502602898657-3e91760cbb34?auto=format&fit=crop&w=700&q=85" },
+  { id: "SYD", name: "Sydney (SYD)", description: "Australia", lat: -33.8688, lon: 151.2093, image: "https://images.unsplash.com/photo-1506973035872-a4ec16b8e8d9?auto=format&fit=crop&w=700&q=85" },
+];
+
+// Curated connecting hubs for the cheapest-route finder. A round trip via a hub
+// is priced as RT(origin↔hub) + RT(hub↔destination): the four one-way segments of
+// those two round trips together fly origin→hub→destination and back, so only
+// round-trip pricing (which Google Travel Explore supports for any airport) is needed.
+const ROUTE_HUBS = [
+  { id: "SIN", name: "Singapore (SIN)", lat: 1.3521, lon: 103.8198 },
+  { id: "BKK", name: "Bangkok (BKK)", lat: 13.7563, lon: 100.5018 },
+  { id: "HKG", name: "Hong Kong (HKG)", lat: 22.3193, lon: 114.1694 },
+  { id: "DXB", name: "Dubai (DXB)", lat: 25.2048, lon: 55.2708 },
+  { id: "DOH", name: "Doha (DOH)", lat: 25.2854, lon: 51.531 },
+  { id: "IST", name: "Istanbul (IST)", lat: 41.0082, lon: 28.9784 },
+];
+
+// Short-lived in-memory cache so repeated route scans (and shared legs across
+// origins/hubs) do not re-spend SerpApi quota within a session.
+const LEG_CACHE_TTL_MS = 10 * 60 * 1000;
+const legCache = new Map();
+
 function sendJson(response, status, body) {
   response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
   response.end(JSON.stringify(body));
@@ -90,6 +127,23 @@ async function mapWithConcurrency(items, limit, mapper) {
     }
   }
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+async function settleWithConcurrency(tasks, limit) {
+  const results = new Array(tasks.length);
+  let cursor = 0;
+  async function worker() {
+    while (cursor < tasks.length) {
+      const index = cursor++;
+      try {
+        results[index] = { status: "fulfilled", value: await tasks[index]() };
+      } catch (error) {
+        results[index] = { status: "rejected", reason: error };
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
   return results;
 }
 
@@ -207,6 +261,235 @@ async function fetchOriginDeals(origin, stops, outboundDate, returnDate, maxPric
   return { origin, travelDuration, deals, empty: deals.length === 0 };
 }
 
+function enrichFallbackDeal(deal, arrival) {
+  return {
+    ...deal,
+    city: arrival.name,
+    country: arrival.description,
+    lat: arrival.lat,
+    lon: arrival.lon,
+    image: arrival.image || deal.image,
+    fallbackDestinationId: arrival.id,
+  };
+}
+
+async function fetchWorldwideFallbackDeals(origins, durationGroups, stops, outboundDate, returnDate, maxPrice, month) {
+  const tasks = WORLDWIDE_FALLBACK_DESTINATIONS.flatMap((arrival) =>
+    origins.flatMap((origin) =>
+      durationGroups.map((duration) => async () => {
+        const result = await fetchOriginDeals(origin, stops, outboundDate, returnDate, maxPrice, month, duration, { ...arrival, type: "airport" });
+        return {
+          ...result,
+          deals: result.deals.map((deal) => enrichFallbackDeal(deal, arrival)),
+        };
+      })
+    )
+  );
+  return settleWithConcurrency(tasks, 6);
+}
+
+function collapseDeals(offers, { travelMonth, allowApproximateTripRange, minTripDays, maxTripDays, minPrice, maxPrice }) {
+  const cheapestByCity = new Map();
+  const eligible = offers.filter((item) => !travelMonth || allowApproximateTripRange || (item.days >= minTripDays && item.days <= maxTripDays));
+  for (const deal of eligible) {
+    const cityOffers = cheapestByCity.get(deal.city) || new Map();
+    const existingOrigin = cityOffers.get(deal.origin);
+    if (!existingOrigin || deal.price < existingOrigin.price) cityOffers.set(deal.origin, deal);
+    cheapestByCity.set(deal.city, cityOffers);
+  }
+  return [...cheapestByCity.values()].map((cityOffers) => {
+    const options = [...cityOffers.values()].sort((a, b) => a.price - b.price);
+    const cheapest = options[0];
+    const origins = options.map((option) => option.origin);
+    return {
+      ...cheapest,
+      id: `live-${cheapest.city}`,
+      origin: origins.length > 1 ? "BOTH" : origins[0],
+      origins,
+      originOptions: options.map((option) => ({
+        origin: option.origin,
+        price: option.price,
+        airline: option.airline,
+        airlineCode: option.airlineCode,
+        link: option.link,
+        date: option.date,
+        days: option.days,
+        stops: option.stops,
+      })),
+    };
+  })
+    .filter((item) => item.hasExactDates)
+    .filter((item) => item.price > 0 && item.price >= minPrice && item.price <= maxPrice)
+    .sort((a, b) => a.price - b.price)
+    .slice(0, 30);
+}
+
+function googleFlightsUrl(departureId, arrivalId, outboundDate, returnDate) {
+  const query = `Flights from ${departureId} to ${arrivalId} on ${outboundDate} through ${returnDate}`;
+  return `https://www.google.com/travel/flights?hl=en&curr=MYR&q=${encodeURIComponent(query)}`;
+}
+
+// Price one round-trip point-to-point leg with the Google Flights engine, which —
+// unlike Google Travel Explore — returns fares for a specific departure→arrival pair.
+async function fetchPointToPoint(departureId, arrivalId, outboundDate, returnDate, stops) {
+  const params = new URLSearchParams({
+    engine: "google_flights",
+    api_key: apiKey,
+    departure_id: departureId,
+    arrival_id: arrivalId,
+    outbound_date: outboundDate,
+    return_date: returnDate,
+    currency: "MYR",
+    hl: "en",
+    gl: "my",
+    type: "1",
+  });
+  if (stops && stops !== "any") params.set("stops", stops);
+  const apiResponse = await fetch(`https://serpapi.com/search.json?${params}`, { signal: AbortSignal.timeout(25000) });
+  const payload = await apiResponse.json().catch(() => null);
+  if (!payload || payload.error) return [];
+  const offers = [...(payload.best_flights || []), ...(payload.other_flights || [])];
+  return offers.map((item) => {
+    const segments = item.flights || [];
+    return {
+      price: parsePrice(item.price),
+      airline: segments[0]?.airline || "Airline not provided",
+      airlineCode: String(segments[0]?.flight_number || "").split(" ")[0] || "",
+      stops: Math.max(0, segments.length - 1),
+    };
+  }).filter((offer) => offer.price > 0);
+}
+
+// Price one round-trip leg (departure → arrival) and return the cheapest offer.
+// Results are cached by leg + dates + stops so shared legs are only fetched once.
+async function priceLeg(departureId, arrival, outboundDate, returnDate, stops) {
+  const cacheKey = `${departureId}>${arrival.id}|${outboundDate}|${returnDate}|${stops || "any"}`;
+  const cached = legCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < LEG_CACHE_TTL_MS) return cached.value;
+
+  const offers = await fetchPointToPoint(departureId, arrival.id, outboundDate, returnDate, stops);
+  const cheapest = offers.sort((a, b) => a.price - b.price)[0] || null;
+  const value = cheapest
+    ? { price: cheapest.price, airline: cheapest.airline, airlineCode: cheapest.airlineCode, stops: cheapest.stops, date: `${outboundDate} – ${returnDate}`, link: googleFlightsUrl(departureId, arrival.id, outboundDate, returnDate), available: true }
+    : { available: false };
+  legCache.set(cacheKey, { at: Date.now(), value });
+  return value;
+}
+
+// Find the cheapest way to reach a destination: compare direct round trips from
+// each origin against one-hub connections, ranked by total price with savings.
+async function findRoutes(origins, destination, outboundDate, returnDate, stops, hubs) {
+  const candidateHubs = hubs.filter((hub) => hub.id !== destination.id && !origins.includes(hub.id));
+
+  // Collect every distinct leg the routes need, price them once (cache-backed), then assemble.
+  const legSpecs = new Map();
+  const addLeg = (dep, arr) => { legSpecs.set(`${dep}>${arr.id}`, { dep, arr }); };
+  for (const origin of origins) {
+    addLeg(origin, destination);
+    for (const hub of candidateHubs) {
+      addLeg(origin, hub);
+      addLeg(hub.id, destination);
+    }
+  }
+  const specs = [...legSpecs.entries()];
+  const settled = await settleWithConcurrency(specs.map(([, spec]) => () => priceLeg(spec.dep, spec.arr, outboundDate, returnDate, stops)), 4);
+  const legPrices = new Map();
+  specs.forEach(([key], index) => {
+    legPrices.set(key, settled[index].status === "fulfilled" ? settled[index].value : { available: false });
+  });
+  const leg = (dep, arrId) => legPrices.get(`${dep}>${arrId}`) || { available: false };
+
+  const routes = [];
+  for (const origin of origins) {
+    const direct = leg(origin, destination.id);
+    if (direct.available) {
+      routes.push({
+        id: `direct-${origin}`,
+        type: "direct",
+        origin,
+        hub: null,
+        total: direct.price,
+        legs: [{ from: origin, to: destination.id, toName: destination.name, ...direct }],
+      });
+    }
+    for (const hub of candidateHubs) {
+      const legOne = leg(origin, hub.id);
+      const legTwo = leg(hub.id, destination.id);
+      if (legOne.available && legTwo.available) {
+        routes.push({
+          id: `hub-${origin}-${hub.id}`,
+          type: "hub",
+          origin,
+          hub: { id: hub.id, name: hub.name },
+          total: legOne.price + legTwo.price,
+          legs: [
+            { from: origin, to: hub.id, toName: hub.name, ...legOne },
+            { from: hub.id, to: destination.id, toName: destination.name, ...legTwo },
+          ],
+        });
+      }
+    }
+  }
+
+  const cheapestDirect = routes.filter((route) => route.type === "direct").reduce((min, route) => Math.min(min, route.total), Infinity);
+  const ranked = routes
+    .map((route) => ({
+      ...route,
+      savingsVsDirect: Number.isFinite(cheapestDirect) ? cheapestDirect - route.total : null,
+    }))
+    .sort((a, b) => a.total - b.total)
+    .slice(0, 12);
+
+  return { routes: ranked, cheapestDirect: Number.isFinite(cheapestDirect) ? cheapestDirect : null, hubsScanned: candidateHubs.length };
+}
+
+async function routeFinder(requestUrl, response) {
+  if (!apiKey) {
+    return sendJson(response, 503, { error: "Live API is ready, but SERPAPI_KEY has not been configured." });
+  }
+  const origin = requestUrl.searchParams.get("origin") || "ALL";
+  const stops = requestUrl.searchParams.get("stops");
+  if (!["ALL", "PEN", "KUL"].includes(origin) || !["any", "1", "2", "3", null].includes(stops)) {
+    return sendJson(response, 400, { error: "Choose a valid airport and stops filter." });
+  }
+  const arrivalId = requestUrl.searchParams.get("arrivalId");
+  const arrivalName = requestUrl.searchParams.get("arrivalName");
+  const arrivalDescription = requestUrl.searchParams.get("arrivalDescription") || "";
+  if (!arrivalId || !arrivalName || !/^[A-Z]{3}$/.test(arrivalId)) {
+    return sendJson(response, 400, { error: "The route finder needs a specific destination airport (3-letter code)." });
+  }
+  const outboundDate = requestUrl.searchParams.get("outboundDate");
+  const returnDate = requestUrl.searchParams.get("returnDate");
+  if (!outboundDate || !returnDate || returnDate <= outboundDate) {
+    return sendJson(response, 400, { error: "The route finder needs specific departure and return dates." });
+  }
+  const requestedHubs = String(requestUrl.searchParams.get("hubs") || "").split(",").map((value) => value.trim()).filter(Boolean);
+  const hubs = (requestedHubs.length ? ROUTE_HUBS.filter((hub) => requestedHubs.includes(hub.id)) : ROUTE_HUBS).slice(0, 6);
+  const origins = origin === "ALL" ? ["PEN", "KUL"] : [origin];
+  const destination = { id: arrivalId, name: arrivalName, description: arrivalDescription };
+
+  try {
+    const { routes, cheapestDirect, hubsScanned } = await findRoutes(origins, destination, outboundDate, returnDate, stops, hubs);
+    const message = routes.length === 0
+      ? `No routes to ${arrivalName} were found for ${outboundDate} to ${returnDate}. Try other dates or a wider stops filter.`
+      : null;
+    return sendJson(response, 200, {
+      routes,
+      cheapestDirect,
+      destination,
+      searchedOrigins: origins,
+      hubsScanned,
+      dates: [outboundDate, returnDate],
+      message,
+      retrievedAt: new Date().toISOString(),
+      source: "SerpApi Google Travel Explore route scan",
+      disclaimer: "Connecting routes are separate tickets: allow a long layover, re-check baggage, and confirm any transit-visa rules before booking.",
+    });
+  } catch (error) {
+    return sendJson(response, 502, { error: error.message || "The route finder hit an error. Please try again." });
+  }
+}
+
 async function searchLocations(requestUrl, response) {
   if (!apiKey) {
     return sendJson(response, 503, { error: "Live API is ready, but SERPAPI_KEY has not been configured." });
@@ -281,49 +564,45 @@ async function exploreFlights(requestUrl, response) {
   const origins = origin === "ALL" ? ["PEN", "KUL"] : [origin];
   const searches = origins.flatMap((code) => durationGroups.map((duration) => fetchOriginDeals(code, stops, outboundDate, returnDate, maxPrice, month, duration, arrival)));
   const results = await Promise.allSettled(searches);
-  const fulfilled = results.filter((result) => result.status === "fulfilled").map((result) => result.value);
-  const successful = fulfilled.flatMap((result) => result.deals);
+  let fulfilled = results.filter((result) => result.status === "fulfilled").map((result) => result.value);
+  let successful = fulfilled.flatMap((result) => result.deals);
   if (fulfilled.length === 0) {
     const reason = results.find((result) => result.status === "rejected")?.reason?.message;
     return sendJson(response, 502, { error: reason || "Live fare search failed. Please try again." });
   }
 
-  const cheapestByCity = new Map();
+  let fallbackUsed = false;
+  let fallbackResults = [];
   // Targeted flexible searches use Google's duration buckets, which can return
-  // exact dates slightly outside the requested custom range. Keep them and show
-  // their real dates instead of inventing a trip length.
-  const eligible = successful.filter((item) => !travelMonth || arrival || (item.days >= minTripDays && item.days <= maxTripDays));
-  for (const deal of eligible) {
-    const cityOffers = cheapestByCity.get(deal.city) || new Map();
-    const existingOrigin = cityOffers.get(deal.origin);
-    if (!existingOrigin || deal.price < existingOrigin.price) cityOffers.set(deal.origin, deal);
-    cheapestByCity.set(deal.city, cityOffers);
+  // exact dates slightly outside the requested custom range. Keep them for a
+  // user-selected airport, but enforce the custom range for worldwide scans.
+  let deals = collapseDeals(successful, {
+    travelMonth,
+    allowApproximateTripRange: Boolean(travelMonth && arrival),
+    minTripDays,
+    maxTripDays,
+    minPrice,
+    maxPrice,
+  });
+
+  if (!arrival && deals.length === 0) {
+    fallbackResults = await fetchWorldwideFallbackDeals(origins, durationGroups, stops, outboundDate, returnDate, maxPrice, month);
+    const fallbackFulfilled = fallbackResults.filter((result) => result.status === "fulfilled").map((result) => result.value);
+    const fallbackSuccessful = fallbackFulfilled.flatMap((result) => result.deals);
+    if (fallbackFulfilled.length) {
+      fallbackUsed = true;
+      fulfilled = fallbackFulfilled;
+      successful = fallbackSuccessful;
+      deals = collapseDeals(successful, {
+        travelMonth,
+        allowApproximateTripRange: false,
+        minTripDays,
+        maxTripDays,
+        minPrice,
+        maxPrice,
+      });
+    }
   }
-  let deals = [...cheapestByCity.values()].map((cityOffers) => {
-    const options = [...cityOffers.values()].sort((a, b) => a.price - b.price);
-    const cheapest = options[0];
-    const origins = options.map((option) => option.origin);
-    return {
-      ...cheapest,
-      id: `live-${cheapest.city}`,
-      origin: origins.length > 1 ? "BOTH" : origins[0],
-      origins,
-      originOptions: options.map((option) => ({
-        origin: option.origin,
-        price: option.price,
-        airline: option.airline,
-        airlineCode: option.airlineCode,
-        link: option.link,
-        date: option.date,
-        days: option.days,
-        stops: option.stops,
-      })),
-    };
-  })
-    .filter((item) => item.hasExactDates)
-    .filter((item) => item.price >= minPrice && item.price <= maxPrice)
-    .sort((a, b) => a.price - b.price)
-    .slice(0, 30);
 
   const includeWeather = requestUrl.searchParams.get("weather") === "true";
   const minDryPercent = Number(requestUrl.searchParams.get("minDryPercent") || 80);
@@ -333,7 +612,7 @@ async function exploreFlights(requestUrl, response) {
   }
 
   const emptyOrigins = origins.filter((code) => !successful.some((deal) => deal.origin === code));
-  const warnings = results.filter((result) => result.status === "rejected").map((result) => result.reason?.message);
+  const warnings = [...results, ...fallbackResults].filter((result) => result.status === "rejected").map((result) => result.reason?.message);
   const originLabel = origin === "ALL" ? "Penang or Kuala Lumpur" : origin;
   const dateLabel = travelMonth
     ? `${travelMonth} for trips of ${minTripDays} to ${maxTripDays} days`
@@ -341,21 +620,23 @@ async function exploreFlights(requestUrl, response) {
       ? `${outboundDate} to ${returnDate}`
       : "the selected filters";
   const message = deals.length === 0
-    ? `No live ${arrival ? `fares to ${arrival.name}` : "worldwide fares"} are currently available from ${originLabel} for ${dateLabel}. Try another month, Anytime, Specific dates, or a wider fare range.`
+    ? `No live ${arrival ? `fares to ${arrival.name}` : "worldwide fares"} are currently available from ${originLabel} for ${dateLabel}${fallbackUsed ? " after scanning popular destination airports" : ""}. Try another month, Anytime, Specific dates, or a wider fare range.`
     : null;
 
   return sendJson(response, 200, {
     deals,
     message,
-    source: "SerpApi Google Travel Explore",
+    source: fallbackUsed ? "SerpApi Google Travel Explore route scan" : "SerpApi Google Travel Explore",
     retrievedAt: new Date().toISOString(),
     searchedOrigins: origins,
     emptyOrigins,
+    fallbackUsed,
+    fallbackDestinationsScanned: fallbackUsed ? WORLDWIDE_FALLBACK_DESTINATIONS.length : 0,
     selectedDestination: arrival,
     fareRange: [minPrice, maxPrice],
     searchedMonth: travelMonth || null,
     tripDayRange: travelMonth ? [minTripDays, maxTripDays] : null,
-    tripDayRangeApproximate: Boolean(travelMonth && arrival),
+    tripDayRangeApproximate: Boolean(travelMonth && arrival && !fallbackUsed),
     weatherRequested: includeWeather,
     weatherSource: includeWeather ? "Open-Meteo" : null,
     warnings,
@@ -375,6 +656,7 @@ const server = createServer(async (request, response) => {
     }
     if (url.pathname === "/api/flights/locations") return await searchLocations(url, response);
     if (url.pathname === "/api/flights/explore") return await exploreFlights(url, response);
+    if (url.pathname === "/api/flights/route") return await routeFinder(url, response);
 
     const requested = url.pathname === "/" ? "/index.html" : url.pathname;
     const path = normalize(join(root, requested));

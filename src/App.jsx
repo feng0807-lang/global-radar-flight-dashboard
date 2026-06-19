@@ -185,6 +185,9 @@ export function App() {
   const [mapZoom, setMapZoom] = useState(1);
   const [mapPan, setMapPan] = useState({ x: 0, y: 0 });
   const [mapDragging, setMapDragging] = useState(false);
+  const [routeResults, setRouteResults] = useState(null);
+  const [routeLoading, setRouteLoading] = useState(false);
+  const [routeOpen, setRouteOpen] = useState(false);
 
   useEffect(() => {
     if (!mapRef.current) return undefined;
@@ -265,6 +268,12 @@ export function App() {
     return [...result].sort((a, b) => sort === "price" ? a.price - b.price : sort === "days" ? a.days - b.days : a.city.localeCompare(b.city));
   }, [deals, origin, minPrice, maxPrice, stopFilter, themes, query, selectedCountry, weatherFilter, minDryPercent, savedOnly, saved, sort]);
   const countries = useMemo(() => [...new Set(deals.map((deal) => deal.country).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [deals]);
+  const budgetSummary = useMemo(() => {
+    if (selectedDestination || filtered.length === 0) return null;
+    const cheapest = filtered.reduce((min, deal) => (deal.price < min.price ? deal : min), filtered[0]);
+    const dearest = filtered.reduce((max, deal) => (deal.price > max.price ? deal : max), filtered[0]);
+    return { count: filtered.length, cheapest, dearest, budget: maxPrice };
+  }, [filtered, selectedDestination, maxPrice]);
 
   const toggleTheme = (theme) => setThemes((current) => current.includes(theme) ? current.filter((item) => item !== theme) : [...current, theme]);
   const toggleSave = (id) => setSaved((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
@@ -274,13 +283,15 @@ export function App() {
   };
   const reset = () => { setMinPrice(0); setMaxPrice(3000); setStopFilter("any"); setThemes([]); setQuery(""); setSelectedDestination(null); setLocationSuggestions([]); setOrigin("ALL"); setSavedOnly(false); setDateMode("anytime"); setOutboundDate(""); setReturnDate(""); setTravelMonth(monthValue(1)); setMinTripDays("4"); setMaxTripDays("10"); setSelectedCountry("ALL"); setWeatherFilter(false); setMinDryPercent(80); };
   const filterProps = { minPrice, setMinPrice, maxPrice, setMaxPrice, stopFilter, setStopFilter, themes, toggleTheme, reset, dateMode, setDateMode, outboundDate, setOutboundDate, returnDate, setReturnDate, travelMonth, setTravelMonth, minTripDays, setMinTripDays, maxTripDays, setMaxTripDays, selectedCountry, setSelectedCountry, countries, weatherFilter, setWeatherFilter, minDryPercent, setMinDryPercent };
-  const loadLiveFares = async () => {
+  const loadLiveFares = async (overrides = {}) => {
     if (liveLoading) return;
+    const worldwide = overrides.worldwide === true;
+    const dest = worldwide ? null : selectedDestination;
     if (window.location.protocol === "file:") {
       updateLiveStatus("Live fares need the local API server. Open START_DASHBOARD.cmd.", "error");
       return;
     }
-    if (query.trim() && !selectedDestination) {
+    if (!worldwide && query.trim() && !selectedDestination) {
       updateLiveStatus("Choose a city, airport, or region from the worldwide destination suggestions.", "error");
       setLocationSearchOpen(true);
       return;
@@ -312,16 +323,16 @@ export function App() {
       return;
     }
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 35000);
+    const timeout = window.setTimeout(() => controller.abort(), 90000);
     setLiveLoading(true);
     updateLiveStatus(`Searching ${origin === "ALL" ? "Penang and Kuala Lumpur" : origin}...`);
     try {
       const params = new URLSearchParams({ origin, minPrice: String(minPrice), maxPrice: String(maxPrice), stops: stopFilter, dateMode });
-      if (selectedDestination) {
-        params.set("arrivalId", selectedDestination.id);
-        params.set("arrivalType", selectedDestination.type);
-        params.set("arrivalName", selectedDestination.name);
-        if (selectedDestination.description) params.set("arrivalDescription", selectedDestination.description);
+      if (dest) {
+        params.set("arrivalId", dest.id);
+        params.set("arrivalType", dest.type);
+        params.set("arrivalName", dest.name);
+        if (dest.description) params.set("arrivalDescription", dest.description);
       }
       if (dateMode === "specific") {
         params.set("outboundDate", outboundDate);
@@ -342,8 +353,8 @@ export function App() {
       if (!response.ok) throw new Error(payload?.error || `Flight API returned ${response.status}.`);
       if (!payload) throw new Error("Flight API returned an invalid response.");
       if (!Array.isArray(payload.deals) || payload.deals.length === 0) {
-        throw new Error(payload.message || (selectedDestination
-          ? `No live fares found to ${selectedDestination.name} for these dates and filters. Try Anytime, Specific dates, a wider trip-day range, or a higher maximum fare.`
+        throw new Error(payload.message || (dest
+          ? `No live fares found to ${dest.name} for these dates and filters. Try Anytime, Specific dates, a wider trip-day range, or a higher maximum fare.`
           : "No live fares matched these filters. Try widening the fare range or travel dates."));
       }
       setDeals(payload.deals);
@@ -351,7 +362,7 @@ export function App() {
       setDataMode("live");
       setApiHealth("online");
       const updatedAt = payload.retrievedAt ? new Date(payload.retrievedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
-      updateLiveStatus(`${payload.deals.length} live ${selectedDestination ? `fare${payload.deals.length === 1 ? "" : "s"} to ${selectedDestination.name}` : "destinations"} loaded${payload.tripDayRangeApproximate ? " · closest available exact dates" : ""}${updatedAt ? ` · updated ${updatedAt}` : ""}${payload.emptyOrigins?.length ? ` · no fares from ${payload.emptyOrigins.join(" or ")}` : ""}${payload.warnings?.length ? " · one airport unavailable" : ""}`, "success");
+      updateLiveStatus(`${payload.deals.length} live ${dest ? `fare${payload.deals.length === 1 ? "" : "s"} to ${dest.name}` : "destinations"} loaded${payload.fallbackUsed ? ` · scanned ${payload.fallbackDestinationsScanned} airports` : ""}${payload.tripDayRangeApproximate ? " · closest available exact dates" : ""}${updatedAt ? ` · updated ${updatedAt}` : ""}${payload.emptyOrigins?.length ? ` · no fares from ${payload.emptyOrigins.join(" or ")}` : ""}${payload.warnings?.length ? " · one airport unavailable" : ""}`, "success");
     } catch (error) {
       const isOffline = error instanceof TypeError || /failed to fetch|networkerror/i.test(error.message);
       if (isOffline) setApiHealth("offline");
@@ -369,6 +380,69 @@ export function App() {
     setDeals(DEALS);
     setDataMode("demo");
     updateLiveStatus("Using built-in demo fares");
+  };
+  const exploreBudget = () => {
+    setSelectedDestination(null);
+    setQuery("");
+    setLocationSuggestions([]);
+    setSavedOnly(false);
+    if (window.location.protocol !== "file:" && apiHealth === "online") {
+      loadLiveFares({ worldwide: true });
+    } else {
+      updateLiveStatus(`Showing destinations within MYR ${maxPrice.toLocaleString()}. Load live fares for current prices.`);
+    }
+  };
+  const findCheapestRoute = async () => {
+    if (routeLoading) return;
+    if (window.location.protocol === "file:") {
+      updateLiveStatus("The route finder needs the local API server. Open START_DASHBOARD.cmd.", "error");
+      return;
+    }
+    if (!selectedDestination || !/^[A-Z]{3}$/.test(selectedDestination.id)) {
+      updateLiveStatus("Pick a specific destination airport (3-letter code) for the route finder.", "error");
+      setLocationSearchOpen(true);
+      return;
+    }
+    if (dateMode !== "specific" || !outboundDate || !returnDate) {
+      updateLiveStatus("The route finder needs specific departure and return dates.", "error");
+      setDateMode("specific");
+      return;
+    }
+    if (returnDate <= outboundDate) {
+      updateLiveStatus("Return date must be after departure date.", "error");
+      return;
+    }
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 120000);
+    setRouteLoading(true);
+    setRouteOpen(true);
+    setRouteResults(null);
+    updateLiveStatus(`Scanning direct and connecting routes to ${selectedDestination.name}…`);
+    try {
+      const params = new URLSearchParams({ origin, stops: stopFilter, arrivalId: selectedDestination.id, arrivalName: selectedDestination.name, outboundDate, returnDate });
+      if (selectedDestination.description) params.set("arrivalDescription", selectedDestination.description);
+      const response = await fetch(`/api/flights/route?${params}`, { signal: controller.signal });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || `Route finder returned ${response.status}.`);
+      if (!Array.isArray(payload.routes) || payload.routes.length === 0) throw new Error(payload.message || "No routes found for these dates.");
+      setRouteResults(payload);
+      setApiHealth("online");
+      const best = payload.routes[0];
+      updateLiveStatus(`Cheapest route to ${selectedDestination.name}: MYR ${best.total.toLocaleString()} ${best.type === "direct" ? "direct" : `via ${best.hub.id}`}.`, "success");
+    } catch (error) {
+      setRouteResults(null);
+      setRouteOpen(false);
+      const isOffline = error instanceof TypeError || /failed to fetch|networkerror/i.test(error.message);
+      if (isOffline) setApiHealth("offline");
+      updateLiveStatus(error.name === "AbortError"
+        ? "Route search timed out. Please try again."
+        : isOffline
+          ? "Flight API server is offline. Open START_DASHBOARD.cmd, then try again."
+          : error.message, "error");
+    } finally {
+      window.clearTimeout(timeout);
+      setRouteLoading(false);
+    }
   };
   const clampPan = (pan, zoom = mapZoom) => {
     const limitX = mapSize.width * (zoom - 1) / 2;
@@ -463,6 +537,26 @@ export function App() {
           </button>
         </header>
 
+        <div className="discovery-actions">
+          {selectedDestination ? (
+            <button className="route-finder-button" disabled={routeLoading} onClick={findCheapestRoute}>
+              <Icon className={routeLoading ? "spin" : ""}>{routeLoading ? "progress_activity" : "route"}</Icon>
+              <span>{routeLoading ? "Finding cheapest route…" : `Find cheapest route to ${selectedDestination.name}`}</span>
+            </button>
+          ) : (
+            <button className="budget-explore-button" disabled={liveLoading} onClick={exploreBudget}>
+              <Icon className={liveLoading ? "spin" : ""}>{liveLoading ? "progress_activity" : "savings"}</Icon>
+              <span>{liveLoading ? "Scanning…" : `Where can MYR ${maxPrice.toLocaleString()} take me?`}</span>
+            </button>
+          )}
+          <div className="budget-quickset">
+            <span>Budget</span>
+            {[1000, 1500, 2500, 4000].map((value) => (
+              <button key={value} className={maxPrice === value ? "active" : ""} onClick={() => setMaxPrice(value)}>{(value / 1000).toFixed(value % 1000 ? 1 : 0)}k</button>
+            ))}
+          </div>
+        </div>
+
         <section ref={mapRef} className={`map-panel ${mapDragging ? "dragging" : ""}`} onWheel={onMapWheel} onPointerDown={onMapPointerDown} onPointerMove={onMapPointerMove} onPointerUp={onMapPointerUp} onPointerCancel={onMapPointerUp}>
           <div className="map-scene" style={{ transform: `translate(${mapPan.x}px, ${mapPan.y}px) scale(${mapZoom})` }}>
             <img className="world-map" src="./assets/world-map-night.png" alt="Night-time world map" draggable="false" />
@@ -510,6 +604,17 @@ export function App() {
               </select>
             </label>
           </div>
+          {budgetSummary && <div className="budget-banner">
+            <div className="budget-banner-main">
+              <span>BUDGET REACH</span>
+              <strong>{budgetSummary.count} {budgetSummary.count === 1 ? "destination" : "destinations"} within MYR {budgetSummary.budget.toLocaleString()}</strong>
+            </div>
+            <div className="budget-banner-pick">
+              <small>Cheapest</small>
+              <b>{budgetSummary.cheapest.city}</b>
+              <span className="budget-banner-price">MYR {budgetSummary.cheapest.price.toLocaleString()}</span>
+            </div>
+          </div>}
           <div className="deal-rail">
             {filtered.length ? filtered.map((deal) => <DealCard key={deal.id} deal={deal} saved={saved.includes(deal.id)} onSave={toggleSave} onOpen={setSelected} />) : (
               <div className="empty-state">
@@ -544,6 +649,44 @@ export function App() {
             <button className="primary-button" onClick={() => toggleSave(selected.id)}><Icon>{saved.includes(selected.id) ? "bookmark_added" : "bookmark_add"}</Icon>{saved.includes(selected.id) ? "Saved to your deals" : "Save this deal"}</button>
             <p className="drawer-note">{selected.theme === "Live" ? "Live fare discovered through Google Travel Explore. Open an airport offer above to continue." : "Demo fare. Load live fares to see current airlines and booking links."}</p>
           </div>
+        </aside>
+      </div>}
+
+      {routeOpen && <div className="drawer-overlay" onClick={() => setRouteOpen(false)}>
+        <aside className="route-drawer" onClick={(e) => e.stopPropagation()}>
+          <button className="drawer-close" onClick={() => setRouteOpen(false)}><Icon>close</Icon></button>
+          <div className="route-drawer-head">
+            <span className="eyebrow">CHEAPEST ROUTE FINDER</span>
+            <h2>Ways to reach {routeResults?.destination?.name || selectedDestination?.name}</h2>
+            {routeResults && <p>{routeResults.dates[0]} → {routeResults.dates[1]} · scanned {routeResults.hubsScanned} hub{routeResults.hubsScanned === 1 ? "" : "s"} from {routeResults.searchedOrigins.join(" & ")}</p>}
+          </div>
+          {routeLoading && <div className="route-loading"><Icon className="spin">progress_activity</Icon> Scanning direct and connecting routes…</div>}
+          {routeResults && <div className="route-list">
+            {routeResults.routes.map((route, index) => {
+              const path = [...route.legs.map((leg) => leg.from), route.legs[route.legs.length - 1].to].join(" → ");
+              return <div key={route.id} className={`route-card ${index === 0 ? "best" : ""}`}>
+                <div className="route-card-top">
+                  <span className="route-path">{path}</span>
+                  <strong>MYR {route.total.toLocaleString()}</strong>
+                </div>
+                <div className="route-tags">
+                  {index === 0 && <span className="tag best">Cheapest</span>}
+                  <span className="tag">{route.type === "direct" ? "Direct booking" : `Connect via ${route.hub.name}`}</span>
+                  {route.savingsVsDirect > 0 && <span className="tag saves">Saves MYR {route.savingsVsDirect.toLocaleString()}</span>}
+                  {route.savingsVsDirect < 0 && <span className="tag over">+MYR {Math.abs(route.savingsVsDirect).toLocaleString()} vs direct</span>}
+                </div>
+                <div className="route-legs">
+                  {route.legs.map((leg, legIndex) => (
+                    <a key={legIndex} className="route-leg" href={leg.link || "#"} target="_blank" rel="noreferrer" onClick={(e) => { if (!leg.link) e.preventDefault(); }}>
+                      <span className="route-leg-path"><b>{leg.from} → {leg.to}</b><small>{leg.airline || "Airline on booking"}{leg.airlineCode ? ` · ${leg.airlineCode}` : ""}</small></span>
+                      <span className="route-leg-price">MYR {leg.price.toLocaleString()}</span>
+                    </a>
+                  ))}
+                </div>
+              </div>;
+            })}
+            <p className="route-disclaimer"><Icon>info</Icon><span>{routeResults.disclaimer}</span></p>
+          </div>}
         </aside>
       </div>}
     </main>
