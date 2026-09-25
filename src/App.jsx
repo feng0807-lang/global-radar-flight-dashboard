@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { projectToContainer } from "./mapProjection.js";
 
 const STORAGE_PREFIX = "global-radar:";
 const HOME_AIRPORTS = { PEN: { lat: 5.2971, lon: 100.2769 }, KUL: { lat: 2.7456, lon: 101.7099 } };
@@ -676,18 +677,7 @@ export function App() {
     setMapDragging(false);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
-  const projectLocation = (lat, lon) => {
-    const scale = Math.max(mapSize.width / 1536, mapSize.height / 1024);
-    const renderedWidth = 1536 * scale;
-    const renderedHeight = 1024 * scale;
-    const clampedLat = Math.max(-85.0511, Math.min(85.0511, Number(lat)));
-    const latitudeRadians = clampedLat * Math.PI / 180;
-    const mercatorY = (1 - Math.log(Math.tan(latitudeRadians) + 1 / Math.cos(latitudeRadians)) / Math.PI) / 2;
-    return {
-      x: (mapSize.width - renderedWidth) / 2 + ((Number(lon) + 180) / 360) * renderedWidth,
-      y: (mapSize.height - renderedHeight) / 2 + mercatorY * renderedHeight,
-    };
-  };
+  const projectLocation = (lat, lon) => projectToContainer(lat, lon, mapSize.width, mapSize.height);
   const penangPoint = projectLocation(HOME_AIRPORTS.PEN.lat, HOME_AIRPORTS.PEN.lon);
   const klPoint = projectLocation(HOME_AIRPORTS.KUL.lat, HOME_AIRPORTS.KUL.lon);
   const homePoints = { PEN: penangPoint, KUL: klPoint };
@@ -702,14 +692,27 @@ export function App() {
     // Home-airport badges sit up-left of PEN and down-left of KUL; keep labels off them.
     const pen = toScreen(penangPoint);
     const kul = toScreen(klPoint);
+    const { width, height } = mapSize;
     const taken = [
       { left: pen.x - 70, right: pen.x + 6, top: pen.y - 34, bottom: pen.y + 6 },
       { left: kul.x - 70, right: kul.x + 6, top: kul.y - 6, bottom: kul.y + 34 },
+      // Fixed map overlays: heading, legend, help hint, and zoom controls.
+      { left: 0, right: 390, top: 0, bottom: 135 },
+      { left: 0, right: 320, top: height - 60, bottom: height },
+      { left: width / 2 - 130, right: width / 2 + 130, top: height - 50, bottom: height },
+      { left: width - 62, right: width, top: height - 175, bottom: height },
     ];
+    const points = new Map(mappedDeals.map((deal) => [deal.id, toScreen(projectLocation(deal.lat, deal.lon))]));
+    // Labels never cover another pin's dot, so every pin stays hoverable and clickable.
+    const dots = mappedDeals.map((deal) => {
+      const point = points.get(deal.id);
+      return { id: deal.id, left: point.x - PIN_DOT_RADIUS, right: point.x + PIN_DOT_RADIUS, top: point.y - PIN_DOT_RADIUS, bottom: point.y + PIN_DOT_RADIUS };
+    });
     const byPrice = [...mappedDeals].sort((a, b) => (b.id === focusId) - (a.id === focusId) || a.price - b.price);
     for (const deal of byPrice) {
-      const point = toScreen(projectLocation(deal.lat, deal.lon));
-      const side = ["right", "left"].find((candidate) => !taken.some((other) => boxesOverlap(labelBox(point, deal.city, candidate), other)))
+      const point = points.get(deal.id);
+      const fits = (box) => !taken.some((other) => boxesOverlap(box, other)) && !dots.some((dot) => dot.id !== deal.id && boxesOverlap(box, dot));
+      const side = ["right", "left"].find((candidate) => fits(labelBox(point, deal.city, candidate)))
         || (deal.id === focusId ? "right" : null);
       if (side) {
         sides.set(deal.id, side);

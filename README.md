@@ -14,6 +14,7 @@ A modern flight-discovery dashboard for finding affordable worldwide trips from 
 - Zoomable worldwide radar map with animated flight-path arcs; hovering a pin or fare card highlights its route
 - Budget insights: destinations in reach, median fare, direct-flight count, and cheapest pick
 - Saved deals and filter preferences persist in the browser, including saved live fares
+- Pins are placed with a projection calibrated to the map artwork (Patterson cylindrical), so cities land on the right spot
 - Map labels declutter automatically: cheaper fares keep their labels, others flip sides or collapse to a dot that expands on hover; zooming in reveals more
 - Shareable searches: the address bar tracks airport, fare range, stops, dates, and destination, and **Share search** copies the link
 - Every deal links straight to a matching Google Flights search
@@ -43,6 +44,8 @@ A modern flight-discovery dashboard for finding affordable worldwide trips from 
    ```
 
 4. Open `http://127.0.0.1:4174`.
+
+Run the unit tests (map projection calibration) with `npm test`.
 
 See [API_SETUP.md](API_SETUP.md) for additional setup and troubleshooting details.
 
