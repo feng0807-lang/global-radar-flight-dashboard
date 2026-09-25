@@ -55,7 +55,44 @@ const DEALS = [
   { id: 12, city: "New York", country: "United States", price: 2780, origin: "KUL", date: "Jun 15 – Jun 25", days: 10, stops: 2, theme: "City", lat: 40.7128, lon: -74.006, accent: "coral", image: "https://images.unsplash.com/photo-1485871981521-5b1fd3805eee?auto=format&fit=crop&w=700&q=85" },
 ];
 
-const Icon = ({ children, className = "" }) => <span className={`material-symbols-rounded ${className}`}>{children}</span>;
+// Icons are ligature text ("bookmark_added"), so hide them from screen readers.
+const Icon = ({ children, className = "" }) => <span className={`material-symbols-rounded ${className}`} aria-hidden="true">{children}</span>;
+
+const FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
+
+// Modal panel: moves focus inside on open, keeps Tab cycling within it, and hands
+// focus back to whatever opened it on close. Escape is handled app-wide.
+function Dialog({ overlayClassName = "drawer-overlay", className, label, onClose, children }) {
+  const panelRef = useRef(null);
+  useEffect(() => {
+    const opener = document.activeElement;
+    panelRef.current?.querySelector(FOCUSABLE)?.focus();
+    return () => {
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+    };
+  }, []);
+  const trapTab = (event) => {
+    if (event.key !== "Tab") return;
+    const focusable = [...panelRef.current.querySelectorAll(FOCUSABLE)].filter((element) => element.offsetParent !== null);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+  return (
+    <div className={overlayClassName} onClick={onClose}>
+      <div ref={panelRef} className={className} role="dialog" aria-modal="true" aria-label={label} onClick={(event) => event.stopPropagation()} onKeyDown={trapTab}>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 function monthValue(offset = 0) {
   const date = new Date();
@@ -240,17 +277,18 @@ function DealCard({ deal, saved, onSave, onOpen, highlighted, onHover }) {
   const origins = deal.origins || [deal.origin];
   const originClass = origins.length > 1 ? "both" : origins[0]?.toLowerCase();
   return (
-    <article className={`deal-card origin-${originClass} ${highlighted ? "highlighted" : ""}`} onClick={() => onOpen(deal)} onMouseEnter={() => onHover(deal.id)} onMouseLeave={() => onHover(null)}>
+    <article className={`deal-card origin-${originClass} ${highlighted ? "highlighted" : ""}`} onMouseEnter={() => onHover(deal.id)} onMouseLeave={() => onHover(null)} onFocus={() => onHover(deal.id)} onBlur={() => onHover(null)}>
       <div className="deal-image-wrap">
         <img src={deal.image} alt={`${deal.city}, ${deal.country}`} />
-        <button className={`save-button ${saved ? "saved" : ""}`} aria-label={`Save ${deal.city}`} onClick={(e) => { e.stopPropagation(); onSave(deal); }}>
+        <button className={`save-button ${saved ? "saved" : ""}`} aria-label={saved ? `Remove ${deal.city} from saved deals` : `Save ${deal.city}`} aria-pressed={saved} onClick={(e) => { e.stopPropagation(); onSave(deal); }}>
           <Icon>{saved ? "bookmark_added" : "bookmark"}</Icon>
         </button>
         <span className={`route-pill origin-${originClass}`}>{origins.length > 1 ? "PEN + KUL" : origins[0]}</span>
       </div>
       <div className="deal-content">
         <div>
-          <h3>{deal.city}</h3>
+          {/* The heading's button stretches over the card so it opens from the keyboard too. */}
+          <h3><button type="button" className="deal-open" onClick={(e) => { e.stopPropagation(); onOpen(deal); }} aria-label={`${deal.city}, ${deal.country}: MYR ${deal.price.toLocaleString()}, ${deal.date}`}>{deal.city}</button></h3>
           <p>{deal.country}</p>
         </div>
         <p className="airline-line"><Icon>airlines</Icon>{deal.airline ? `${deal.airline}${deal.airlineCode ? ` · ${deal.airlineCode}` : ""}` : "Airline shown on live fares"}</p>
@@ -734,19 +772,19 @@ export function App() {
   return (
     <main className="app-shell">
       <FilterPanel {...filterProps} />
-      {filtersOpen && <div className="mobile-overlay" onClick={() => setFiltersOpen(false)}>
-        <div onClick={(e) => e.stopPropagation()}><FilterPanel mobile close={() => setFiltersOpen(false)} {...filterProps} /></div>
-      </div>}
+      {filtersOpen && <Dialog overlayClassName="mobile-overlay" label="Filters" onClose={() => setFiltersOpen(false)}>
+        <FilterPanel mobile close={() => setFiltersOpen(false)} {...filterProps} />
+      </Dialog>}
 
       <section className="workspace">
         <header className="topbar">
-          <button className="mobile-filter-button" onClick={() => setFiltersOpen(true)}><Icon>tune</Icon></button>
-          <div className="origin-switch">
+          <button className="mobile-filter-button" onClick={() => setFiltersOpen(true)} aria-label="Open filters"><Icon>tune</Icon></button>
+          <div className="origin-switch" role="group" aria-label="Departure airport">
             {[
               ["ALL", "Both airports"],
               ["PEN", "Penang"],
               ["KUL", "Kuala Lumpur"],
-            ].map(([code, label]) => <button key={code} className={origin === code ? "active" : ""} onClick={() => setOrigin(code)}><small>From</small><strong>{label}</strong></button>)}
+            ].map(([code, label]) => <button key={code} className={origin === code ? "active" : ""} aria-pressed={origin === code} onClick={() => setOrigin(code)}><small>From</small><strong>{label}</strong></button>)}
           </div>
           <div className="search-box-wrap">
             <label className={`search-box ${selectedDestination ? "selected" : ""}`}>
@@ -835,7 +873,7 @@ export function App() {
             <div>{savedOnly
               ? <><span>YOUR</span><h2>SAVED DEALS</h2></>
               : <><span>BEST DEALS FROM</span><h2>{origin === "PEN" ? "PENANG" : origin === "KUL" ? "KUALA LUMPUR" : "PENANG & KUALA LUMPUR"}</h2></>}</div>
-            {liveStatus && <p className={`live-status ${liveStatusKind}`}>{liveStatus}</p>}
+            <p className={`live-status ${liveStatusKind}`} role="status" aria-live="polite">{liveStatus}</p>
             <label>Sort by
               <select value={sort} onChange={(e) => setSort(e.target.value)}>
                 <option value="price">Price: low to high</option>
@@ -878,10 +916,9 @@ export function App() {
         </section>
       </section>
 
-      {selected && <div className="drawer-overlay" onClick={() => setSelected(null)}>
-        <aside className="deal-drawer" onClick={(e) => e.stopPropagation()}>
-          <button className="drawer-close" onClick={() => setSelected(null)}><Icon>close</Icon></button>
-          <img src={selected.image} alt={selected.city} />
+      {selected && <Dialog className="deal-drawer" label={`${selected.city} deal`} onClose={() => setSelected(null)}>
+          <button className="drawer-close" onClick={() => setSelected(null)} aria-label="Close deal"><Icon>close</Icon></button>
+          <img src={selected.image} alt="" />
           <div className="drawer-content">
             <span className="eyebrow">DISCOVERED DEAL</span>
             <h2>{selected.city}</h2><p className="drawer-country">{selected.country}</p>
@@ -896,12 +933,10 @@ export function App() {
             <button className="primary-button" onClick={() => toggleSave(selected)}><Icon>{saved.includes(selected.id) ? "bookmark_added" : "bookmark_add"}</Icon>{saved.includes(selected.id) ? "Saved to your deals" : "Save this deal"}</button>
             <p className="drawer-note">{selected.theme === "Live" ? "Live fare discovered through Google Travel Explore. Open an airport offer above to continue." : "Demo fare. Load live fares to see current airlines and booking links."}</p>
           </div>
-        </aside>
-      </div>}
+      </Dialog>}
 
-      {routeOpen && <div className="drawer-overlay" onClick={() => setRouteOpen(false)}>
-        <aside className="route-drawer" onClick={(e) => e.stopPropagation()}>
-          <button className="drawer-close" onClick={() => setRouteOpen(false)}><Icon>close</Icon></button>
+      {routeOpen && <Dialog className="route-drawer" label="Cheapest route finder" onClose={() => setRouteOpen(false)}>
+          <button className="drawer-close" onClick={() => setRouteOpen(false)} aria-label="Close route finder"><Icon>close</Icon></button>
           <div className="route-drawer-head">
             <span className="eyebrow">CHEAPEST ROUTE FINDER</span>
             <h2>Ways to reach {routeResults?.destination?.name || selectedDestination?.name}</h2>
@@ -934,8 +969,7 @@ export function App() {
             })}
             <p className="route-disclaimer"><Icon>info</Icon><span>{routeResults.disclaimer}</span></p>
           </div>}
-        </aside>
-      </div>}
+      </Dialog>}
     </main>
   );
 }

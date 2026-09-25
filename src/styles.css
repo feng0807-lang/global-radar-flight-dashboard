@@ -1,4 +1,6 @@
-@import url("https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=DM+Sans:wght@400;500;600;700&family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0..1,0&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=DM+Sans:wght@400;500;600;700&display=swap");
+/* Icons use display=block so ligature names ("flight_takeoff") never flash as text while loading. */
+@import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0..1,0&display=block");
 
 :root {
   color: #f5f8ff;
@@ -296,3 +298,15 @@ button { cursor: pointer; }
   .map-pin.compact { --dot: 28px; }
   .map-pin.label-left { flex-direction: row; transform: translate(calc(var(--dot) / -2), -50%) scale(var(--pin-scale, 1)); transform-origin: calc(var(--dot) / 2) 50%; }
 }
+
+/* Accessibility: stretched card button, visible keyboard focus */
+.deal-card { position: relative; }
+.deal-card .deal-content { position: static; }
+.deal-card .route-pill { pointer-events: none; }
+.deal-open { all: unset; cursor: pointer; }
+.deal-open::after { content: ""; position: absolute; inset: 0; z-index: 1; }
+.deal-card .save-button { z-index: 3; }
+.deal-card:focus-within { border-color: rgba(35, 201, 213, .8); }
+.deal-open:focus-visible::after { outline: 2px solid var(--teal); outline-offset: -2px; border-radius: 9px; }
+button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.deals-heading .live-status:empty { margin-top: 0; margin-bottom: 0; }
