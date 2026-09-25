@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assembleRoutes, collapseDeals, daysBetween, durationGroupsFor, googleFlightsUrl, mapDestination, mapSpecificFlight, parsePrice } from "./lib/fares.mjs";
 
 const root = fileURLToPath(new URL("./dist", import.meta.url));
 try {
@@ -110,16 +111,6 @@ function sendJson(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
-function parsePrice(value) {
-  const parsed = Number(String(value ?? "").replace(/[^\d.]/g, ""));
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function daysBetween(start, end) {
-  if (!start || !end) return 0;
-  return Math.round((new Date(`${end}T00:00:00Z`) - new Date(`${start}T00:00:00Z`)) / 86400000);
-}
-
 function isoToday() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -191,66 +182,6 @@ async function settleWithConcurrency(tasks, limit) {
   }
   await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
   return results;
-}
-
-function mapDestination(item, index, origin, requestedOutboundDate, requestedReturnDate) {
-  const rawLatitude = Number(item.gps_coordinates?.latitude);
-  const rawLongitude = Number(item.gps_coordinates?.longitude);
-  const latitude = Number.isFinite(rawLatitude) ? rawLatitude : null;
-  const longitude = Number.isFinite(rawLongitude) ? rawLongitude : null;
-  const price = parsePrice(item.flight_price ?? item.price);
-  const flightDates = item.flight_dates || {};
-  const startDate = requestedOutboundDate || item.start_date || flightDates.departure;
-  const endDate = requestedReturnDate || item.end_date || flightDates.return;
-  return {
-    id: `live-${origin}-${index}-${item.name || item.city || "destination"}`,
-    city: String(item.name || item.city || "Explore destination"),
-    country: String(item.country || item.description || "Explore destination"),
-    price,
-    origin: origin === "ALL" ? "PEN / KUL" : origin,
-    date: startDate && endDate ? `${startDate} – ${endDate}` : "Dates unavailable",
-    hasExactDates: Boolean(startDate && endDate),
-    days: daysBetween(startDate, endDate) || Number(item.duration ?? 7),
-    stops: Number(item.number_of_stops ?? 0),
-    airline: String(item.airline || "Airline not provided"),
-    airlineCode: String(item.airline_code || ""),
-    theme: "Live",
-    lat: latitude,
-    lon: longitude,
-    accent: price < 900 ? "gold" : price < 1600 ? "teal" : "coral",
-    image: item.thumbnail || "https://images.unsplash.com/photo-1436491865332-7a61a109cc05?auto=format&fit=crop&w=700&q=85",
-    link: item.link || null,
-  };
-}
-
-function tripDaysForDurationGroup(travelDuration) {
-  return travelDuration === 1 ? 3 : travelDuration === 3 ? 14 : 7;
-}
-
-function mapSpecificFlight(item, index, origin, requestedOutboundDate, requestedReturnDate, arrival, fallbackLink, travelDuration, flexibleStartDate, flexibleEndDate) {
-  const price = parsePrice(item.flight_price ?? item.price);
-  const startDate = item.start_date || requestedOutboundDate || flexibleStartDate;
-  const endDate = item.end_date || requestedReturnDate || flexibleEndDate;
-  return {
-    id: `live-${origin}-${index}-${arrival.id}`,
-    city: arrival.name,
-    country: arrival.description || "Selected airport",
-    price,
-    origin,
-    date: startDate && endDate ? `${startDate} – ${endDate}` : "Flexible dates",
-    hasExactDates: Boolean(startDate && endDate),
-    // Targeted Explore flights report `duration` as flight time in minutes, not trip length.
-    days: daysBetween(startDate, endDate) || tripDaysForDurationGroup(travelDuration),
-    stops: Number(item.number_of_stops ?? 0),
-    airline: String(item.airline || "Airline not provided"),
-    airlineCode: String(item.airline_code || ""),
-    theme: "Live",
-    lat: null,
-    lon: null,
-    accent: price < 900 ? "gold" : price < 1600 ? "teal" : "coral",
-    image: item.thumbnail || "https://images.unsplash.com/photo-1436491865332-7a61a109cc05?auto=format&fit=crop&w=700&q=85",
-    link: item.link || fallbackLink || null,
-  };
 }
 
 async function fetchOriginDeals(origin, stops, outboundDate, returnDate, maxPrice, month, travelDuration, arrival) {
@@ -330,47 +261,6 @@ async function fetchWorldwideFallbackDeals(origins, durationGroups, stops, outbo
   return settleWithConcurrency(tasks, 6);
 }
 
-function collapseDeals(offers, { travelMonth, allowApproximateTripRange, minTripDays, maxTripDays, minPrice, maxPrice }) {
-  const cheapestByCity = new Map();
-  const eligible = offers.filter((item) => !travelMonth || allowApproximateTripRange || (item.days >= minTripDays && item.days <= maxTripDays));
-  for (const deal of eligible) {
-    const cityOffers = cheapestByCity.get(deal.city) || new Map();
-    const existingOrigin = cityOffers.get(deal.origin);
-    if (!existingOrigin || deal.price < existingOrigin.price) cityOffers.set(deal.origin, deal);
-    cheapestByCity.set(deal.city, cityOffers);
-  }
-  return [...cheapestByCity.values()].map((cityOffers) => {
-    const options = [...cityOffers.values()].sort((a, b) => a.price - b.price);
-    const cheapest = options[0];
-    const origins = options.map((option) => option.origin);
-    return {
-      ...cheapest,
-      id: `live-${cheapest.city}`,
-      origin: origins.length > 1 ? "BOTH" : origins[0],
-      origins,
-      originOptions: options.map((option) => ({
-        origin: option.origin,
-        price: option.price,
-        airline: option.airline,
-        airlineCode: option.airlineCode,
-        link: option.link,
-        date: option.date,
-        days: option.days,
-        stops: option.stops,
-      })),
-    };
-  })
-    .filter((item) => item.hasExactDates)
-    .filter((item) => item.price > 0 && item.price >= minPrice && item.price <= maxPrice)
-    .sort((a, b) => a.price - b.price)
-    .slice(0, 30);
-}
-
-function googleFlightsUrl(departureId, arrivalId, outboundDate, returnDate) {
-  const query = `Flights from ${departureId} to ${arrivalId} on ${outboundDate} through ${returnDate}`;
-  return `https://www.google.com/travel/flights?hl=en&curr=MYR&q=${encodeURIComponent(query)}`;
-}
-
 // Price one round-trip point-to-point leg with the Google Flights engine, which —
 // unlike Google Travel Explore — returns fares for a specific departure→arrival pair.
 async function fetchPointToPoint(departureId, arrivalId, outboundDate, returnDate, stops) {
@@ -440,48 +330,7 @@ async function findRoutes(origins, destination, outboundDate, returnDate, stops,
   });
   const leg = (dep, arrId) => legPrices.get(`${dep}>${arrId}`) || { available: false };
 
-  const routes = [];
-  for (const origin of origins) {
-    const direct = leg(origin, destination.id);
-    if (direct.available) {
-      routes.push({
-        id: `direct-${origin}`,
-        type: "direct",
-        origin,
-        hub: null,
-        total: direct.price,
-        legs: [{ from: origin, to: destination.id, toName: destination.name, ...direct }],
-      });
-    }
-    for (const hub of candidateHubs) {
-      const legOne = leg(origin, hub.id);
-      const legTwo = leg(hub.id, destination.id);
-      if (legOne.available && legTwo.available) {
-        routes.push({
-          id: `hub-${origin}-${hub.id}`,
-          type: "hub",
-          origin,
-          hub: { id: hub.id, name: hub.name },
-          total: legOne.price + legTwo.price,
-          legs: [
-            { from: origin, to: hub.id, toName: hub.name, ...legOne },
-            { from: hub.id, to: destination.id, toName: destination.name, ...legTwo },
-          ],
-        });
-      }
-    }
-  }
-
-  const cheapestDirect = routes.filter((route) => route.type === "direct").reduce((min, route) => Math.min(min, route.total), Infinity);
-  const ranked = routes
-    .map((route) => ({
-      ...route,
-      savingsVsDirect: Number.isFinite(cheapestDirect) ? cheapestDirect - route.total : null,
-    }))
-    .sort((a, b) => a.total - b.total)
-    .slice(0, 12);
-
-  return { routes: ranked, cheapestDirect: Number.isFinite(cheapestDirect) ? cheapestDirect : null, hubsScanned: candidateHubs.length };
+  return { ...assembleRoutes(origins, destination, candidateHubs, leg), hubsScanned: candidateHubs.length };
 }
 
 async function routeFinder(requestUrl, response) {
@@ -594,13 +443,7 @@ async function exploreFlights(requestUrl, response) {
     return sendJson(response, 400, { error: "Choose a valid trip range from 2 to 21 days." });
   }
   const month = travelMonth ? Number(travelMonth.split("-")[1]) : 0;
-  const durationGroups = travelMonth
-    ? [
-        ...(minTripDays <= 4 ? [1] : []),
-        ...(minTripDays <= 10 && maxTripDays >= 5 ? [2] : []),
-        ...(maxTripDays >= 11 ? [3] : []),
-      ]
-    : [null];
+  const durationGroups = travelMonth ? durationGroupsFor(minTripDays, maxTripDays) : [null];
   const origins = origin === "ALL" ? ["PEN", "KUL"] : [origin];
   const searches = origins.flatMap((code) => durationGroups.map((duration) => fetchOriginDeals(code, stops, outboundDate, returnDate, maxPrice, month, duration, arrival)));
   const results = await Promise.allSettled(searches);

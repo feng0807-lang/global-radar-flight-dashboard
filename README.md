@@ -18,6 +18,7 @@ A modern flight-discovery dashboard for finding affordable worldwide trips from 
 - Map labels declutter automatically: cheaper fares keep their labels, others flip sides or collapse to a dot that expands on hover; zooming in reveals more
 - Shareable searches: the address bar tracks airport, fare range, stops, dates, and destination, and **Share search** copies the link
 - Every deal links straight to a matching Google Flights search
+- Keyboard and screen-reader friendly: deals open with Tab + Enter, panels behave as modal dialogs, and search status is announced
 - Keyboard shortcuts: `/` focuses destination search, `Esc` closes panels
 - Server-side 10-minute cache of SerpApi responses so repeated searches do not spend extra quota (hit/miss counts at `/api/status`)
 
@@ -45,7 +46,7 @@ A modern flight-discovery dashboard for finding affordable worldwide trips from 
 
 4. Open `http://127.0.0.1:4174`.
 
-Run the unit tests (map projection calibration) with `npm test`.
+Run the unit tests with `npm test`. They cover the map projection calibration (`src/mapProjection.js`) and the fare logic the API server uses to merge, filter, and rank fares and connecting routes (`lib/fares.mjs`); no API key or network access is needed.
 
 See [API_SETUP.md](API_SETUP.md) for additional setup and troubleshooting details.
 

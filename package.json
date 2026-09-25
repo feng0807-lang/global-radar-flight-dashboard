@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "start": "node server.mjs",
-    "test": "node --test \"src/**/*.test.js\""
+    "test": "node --test \"src/**/*.test.js\" \"lib/**/*.test.mjs\""
   },
   "dependencies": {
     "@vitejs/plugin-react": "5.0.4",
