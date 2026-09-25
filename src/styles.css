@@ -206,7 +206,12 @@ button { cursor: pointer; }
 .budget-banner-main { display: flex; flex-direction: column; gap: 3px; }
 .budget-banner-main span { color: var(--gold); font-size: 10px; font-weight: 700; letter-spacing: .8px; }
 .budget-banner-main strong { font: 700 17px "Barlow Condensed", sans-serif; letter-spacing: .3px; }
-.budget-banner-pick { display: flex; align-items: baseline; gap: 8px; }
+.budget-banner-pick { display: flex; align-items: baseline; gap: 8px; border: 1px solid transparent; border-radius: 999px; background: transparent; color: inherit; padding: 6px 10px; }
+.budget-banner-pick:hover { border-color: rgba(255, 198, 46, .45); background: rgba(255, 198, 46, .06); }
+.budget-banner-stats { display: flex; gap: 22px; margin-left: auto; }
+.budget-banner-stats span { display: flex; flex-direction: column; gap: 2px; }
+.budget-banner-stats small { color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .6px; }
+.budget-banner-stats b { color: #eef4ff; font-size: 13px; }
 .budget-banner-pick small { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .6px; }
 .budget-banner-pick b { color: #eef4ff; font-size: 14px; }
 .budget-banner-price { color: var(--gold); font-weight: 800; font-size: 15px; }
@@ -237,3 +242,29 @@ button { cursor: pointer; }
 .route-leg-price { color: #eef4ff; font-weight: 700; font-size: 13px; white-space: nowrap; }
 .route-disclaimer { display: flex; gap: 8px; margin: 6px 0 0; padding: 11px 13px; border-radius: 10px; background: rgba(255, 198, 46, .08); color: #f2dca0; font-size: 11px; line-height: 1.45; }
 .route-disclaimer .material-symbols-rounded { color: var(--gold); font-size: 17px; flex-shrink: 0; }
+
+/* Radar map: flight arcs, sweep, and pin/card focus linking */
+.flight-arcs { position: absolute; inset: 0; z-index: 3; overflow: visible; pointer-events: none; }
+.flight-arcs .arc { fill: none; stroke-width: 1.4; stroke-linecap: round; vector-effect: non-scaling-stroke; opacity: .6; stroke-dasharray: 5 7; animation: arc-flow 1.6s linear infinite; transition: opacity .2s, stroke-width .2s; }
+.flight-arcs .arc.origin-pen { stroke: var(--gold); }
+.flight-arcs .arc.origin-kul { stroke: var(--teal); }
+.flight-arcs.has-focus .arc { opacity: .15; }
+.flight-arcs.has-focus .arc.focused { opacity: 1; stroke-width: 2.4; stroke-dasharray: none; filter: drop-shadow(0 0 4px currentColor); }
+@keyframes arc-flow { to { stroke-dashoffset: -24; } }
+.radar-sweep { position: absolute; z-index: 2; width: 0; height: 0; pointer-events: none; }
+.radar-sweep i { position: absolute; left: 0; top: 0; width: 260px; height: 260px; margin: -130px 0 0 -130px; border: 1px solid rgba(35, 201, 213, .5); border-radius: 50%; opacity: 0; transform: scale(.1); animation: radar-ping 4.5s ease-out infinite; }
+.radar-sweep i:nth-child(2) { animation-delay: 1.5s; }
+.radar-sweep i:nth-child(3) { animation-delay: 3s; }
+@keyframes radar-ping { 0% { opacity: .9; transform: scale(.1); } 100% { opacity: 0; transform: scale(1); } }
+.map-pin.focused { z-index: 7; }
+.map-pin.focused .pin-dot { transform: scale(1.18); box-shadow: 0 0 0 5px rgba(255, 255, 255, .18); }
+.map-pin:focus-visible { outline: 2px solid white; outline-offset: 4px; border-radius: 6px; }
+.deal-card.highlighted { border-color: rgba(35, 201, 213, .8); box-shadow: 0 0 0 1px rgba(35, 201, 213, .45), 0 10px 26px rgba(35, 201, 213, .14); }
+@media (prefers-reduced-motion: reduce) {
+  .flight-arcs .arc, .radar-sweep i { animation: none; }
+  .radar-sweep { display: none; }
+}
+@media (max-width: 820px) {
+  .budget-banner { flex-wrap: wrap; }
+  .budget-banner-stats { margin-left: 0; order: 3; flex-basis: 100%; }
+}

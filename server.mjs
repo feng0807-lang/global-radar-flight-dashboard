@@ -20,6 +20,17 @@ const mime = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".json": "application/json; charset=utf-8",
+  ".woff2": "font/woff2",
+  ".txt": "text/plain; charset=utf-8",
+};
+
+const SECURITY_HEADERS = {
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
+  "X-Frame-Options": "DENY",
 };
 
 const WORLDWIDE_FALLBACK_DESTINATIONS = [
@@ -59,8 +70,43 @@ const ROUTE_HUBS = [
 const LEG_CACHE_TTL_MS = 10 * 60 * 1000;
 const legCache = new Map();
 
+// Successful SerpApi payloads are cached by request (minus the key) so refreshing,
+// toggling filters, or re-running a search does not re-spend the monthly quota.
+const SERPAPI_CACHE_TTL_MS = 10 * 60 * 1000;
+const SERPAPI_CACHE_MAX_ENTRIES = 300;
+const serpApiCache = new Map();
+const cacheStats = { hits: 0, misses: 0 };
+
+async function fetchSerpApi(params, timeoutMs) {
+  const cacheParams = new URLSearchParams(params);
+  cacheParams.delete("api_key");
+  cacheParams.sort();
+  const cacheKey = cacheParams.toString();
+  const cached = serpApiCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < SERPAPI_CACHE_TTL_MS) {
+    cacheStats.hits += 1;
+    return { ok: true, status: 200, payload: cached.payload, cached: true };
+  }
+  cacheStats.misses += 1;
+  const apiResponse = await fetch(`https://serpapi.com/search.json?${params}`, { signal: AbortSignal.timeout(timeoutMs) });
+  const responseText = await apiResponse.text();
+  let payload = null;
+  try {
+    payload = JSON.parse(responseText);
+  } catch {
+    // Callers decide how to report an unparseable response.
+  }
+  if (apiResponse.ok && payload && !payload.error) {
+    serpApiCache.delete(cacheKey);
+    serpApiCache.set(cacheKey, { at: Date.now(), payload });
+    // Map iteration order is insertion order, so the first key is the oldest entry.
+    while (serpApiCache.size > SERPAPI_CACHE_MAX_ENTRIES) serpApiCache.delete(serpApiCache.keys().next().value);
+  }
+  return { ok: apiResponse.ok, status: apiResponse.status, payload, cached: false };
+}
+
 function sendJson(response, status, body) {
-  response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+  response.writeHead(status, { ...SECURITY_HEADERS, "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
   response.end(JSON.stringify(body));
 }
 
@@ -227,18 +273,14 @@ async function fetchOriginDeals(origin, stops, outboundDate, returnDate, maxPric
   if (month) params.set("month", String(month));
   if (travelDuration) params.set("travel_duration", String(travelDuration));
 
-  const apiResponse = await fetch(`https://serpapi.com/search.json?${params}`, { signal: AbortSignal.timeout(25000) });
-  const responseText = await apiResponse.text();
-  let payload;
-  try {
-    payload = JSON.parse(responseText);
-  } catch {
+  const { ok, payload } = await fetchSerpApi(params, 25000);
+  if (!payload) {
     throw new Error(`SerpApi returned an invalid response for ${origin}.`);
   }
   if (payload.error && /empty results for departure_id/i.test(payload.error)) {
     return { origin, travelDuration, deals: [], empty: true };
   }
-  if (!apiResponse.ok || payload.error) {
+  if (!ok || payload.error) {
     throw new Error(payload.error || `Live search failed for ${origin}.`);
   }
   if (Array.isArray(payload.destinations)) {
@@ -345,8 +387,7 @@ async function fetchPointToPoint(departureId, arrivalId, outboundDate, returnDat
     type: "1",
   });
   if (stops && stops !== "any") params.set("stops", stops);
-  const apiResponse = await fetch(`https://serpapi.com/search.json?${params}`, { signal: AbortSignal.timeout(25000) });
-  const payload = await apiResponse.json().catch(() => null);
+  const { payload } = await fetchSerpApi(params, 25000);
   if (!payload || payload.error) return [];
   const offers = [...(payload.best_flights || []), ...(payload.other_flights || [])];
   return offers.map((item) => {
@@ -504,10 +545,9 @@ async function searchLocations(requestUrl, response) {
     hl: "en",
     gl: "my",
   });
-  const apiResponse = await fetch(`https://serpapi.com/search.json?${params}`, { signal: AbortSignal.timeout(12000) });
-  const payload = await apiResponse.json();
-  if (!apiResponse.ok || payload.error) {
-    return sendJson(response, 502, { error: payload.error || "Worldwide destination search failed." });
+  const { ok, payload } = await fetchSerpApi(params, 12000);
+  if (!ok || !payload || payload.error) {
+    return sendJson(response, 502, { error: payload?.error || "Worldwide destination search failed." });
   }
   const suggestions = (payload.suggestions || []).flatMap((item) =>
     (item.airports || []).map((airport) => ({
@@ -652,6 +692,7 @@ const server = createServer(async (request, response) => {
         keyConfigured: Boolean(apiKey),
         provider: "SerpApi Google Travel Explore",
         serverTime: new Date().toISOString(),
+        cache: { entries: serpApiCache.size, hits: cacheStats.hits, misses: cacheStats.misses, ttlMinutes: SERPAPI_CACHE_TTL_MS / 60000 },
       });
     }
     if (url.pathname === "/api/flights/locations") return await searchLocations(url, response);
@@ -662,7 +703,9 @@ const server = createServer(async (request, response) => {
     const path = normalize(join(root, requested));
     if (!path.startsWith(root)) return sendJson(response, 403, { error: "Forbidden" });
     await stat(path);
-    response.writeHead(200, { "Content-Type": mime[extname(path)] || "application/octet-stream", "Cache-Control": "no-store" });
+    // Vite fingerprints everything under /assets/, so those files can be cached for good.
+    const cacheControl = requested.startsWith("/assets/index-") ? "public, max-age=31536000, immutable" : "no-store";
+    response.writeHead(200, { ...SECURITY_HEADERS, "Content-Type": mime[extname(path)] || "application/octet-stream", "Cache-Control": cacheControl });
     response.end(await readFile(path));
   } catch (error) {
     if (request.url?.startsWith("/api/")) {
@@ -670,7 +713,7 @@ const server = createServer(async (request, response) => {
       return sendJson(response, 500, { error: "The flight API server hit an unexpected error. Please try again." });
     }
     try {
-      response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+      response.writeHead(200, { ...SECURITY_HEADERS, "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
       response.end(await readFile(join(root, "index.html")));
     } catch {
       sendJson(response, 404, { error: "Not found" });

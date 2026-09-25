@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+const STORAGE_PREFIX = "global-radar:";
+const HOME_AIRPORTS = { PEN: { lat: 5.2971, lon: 100.2769 }, KUL: { lat: 2.7456, lon: 101.7099 } };
+
 const DEALS = [
   { id: 1, city: "Bali", country: "Indonesia", price: 480, origin: "PEN", date: "Jun 5 – Jun 12", days: 7, stops: 0, theme: "Beach", lat: -8.65, lon: 115.216, accent: "gold", image: "https://images.unsplash.com/photo-1537996194471-e657df975ab4?auto=format&fit=crop&w=700&q=85" },
   { id: 2, city: "Manila", country: "Philippines", price: 680, origin: "KUL", date: "Jun 3 – Jun 9", days: 6, stops: 0, theme: "City", lat: 14.5995, lon: 120.9842, accent: "teal", image: "https://images.unsplash.com/photo-1518509562904-e7ef99cdcc86?auto=format&fit=crop&w=700&q=85" },
@@ -29,6 +32,53 @@ function daysFromToday(date) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   return Math.round((new Date(`${date}T00:00:00`) - today) / 86400000);
+}
+
+function readStored(key, fallback) {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_PREFIX + key);
+    return raw === null ? fallback : JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+// useState that mirrors its value into localStorage. Storage can be unavailable
+// (private windows, blocked site data), so every access is guarded.
+function usePersistentState(key, fallback) {
+  const [value, setValue] = useState(() => readStored(key, fallback));
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(value));
+    } catch {
+      // Preferences simply will not persist.
+    }
+  }, [key, value]);
+  return [value, setValue];
+}
+
+function median(values) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : Math.round((sorted[middle - 1] + sorted[middle]) / 2);
+}
+
+// A curved flight path between two projected points, bowed away from the equator line
+// so arcs read like great-circle routes on the flat map.
+function arcPath(from, to) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const distance = Math.hypot(dx, dy);
+  if (!distance) return "";
+  const lift = Math.min(distance * 0.28, 180);
+  const midX = (from.x + to.x) / 2;
+  const midY = (from.y + to.y) / 2;
+  // Unit normal, flipped so the bow always points up the screen (northwards).
+  let nx = -dy / distance;
+  let ny = dx / distance;
+  if (ny > 0) { nx = -nx; ny = -ny; }
+  return `M${from.x.toFixed(1)},${from.y.toFixed(1)} Q${(midX + nx * lift).toFixed(1)},${(midY + ny * lift).toFixed(1)} ${to.x.toFixed(1)},${to.y.toFixed(1)}`;
 }
 
 function searchableText(value) {
@@ -122,14 +172,14 @@ function FilterPanel({ minPrice, setMinPrice, maxPrice, setMaxPrice, stopFilter,
   );
 }
 
-function DealCard({ deal, saved, onSave, onOpen }) {
+function DealCard({ deal, saved, onSave, onOpen, highlighted, onHover }) {
   const origins = deal.origins || [deal.origin];
   const originClass = origins.length > 1 ? "both" : origins[0]?.toLowerCase();
   return (
-    <article className={`deal-card origin-${originClass}`} onClick={() => onOpen(deal)}>
+    <article className={`deal-card origin-${originClass} ${highlighted ? "highlighted" : ""}`} onClick={() => onOpen(deal)} onMouseEnter={() => onHover(deal.id)} onMouseLeave={() => onHover(null)}>
       <div className="deal-image-wrap">
         <img src={deal.image} alt={`${deal.city}, ${deal.country}`} />
-        <button className={`save-button ${saved ? "saved" : ""}`} aria-label={`Save ${deal.city}`} onClick={(e) => { e.stopPropagation(); onSave(deal.id); }}>
+        <button className={`save-button ${saved ? "saved" : ""}`} aria-label={`Save ${deal.city}`} onClick={(e) => { e.stopPropagation(); onSave(deal); }}>
           <Icon>{saved ? "bookmark_added" : "bookmark"}</Icon>
         </button>
         <span className={`route-pill origin-${originClass}`}>{origins.length > 1 ? "PEN + KUL" : origins[0]}</span>
@@ -150,18 +200,22 @@ function DealCard({ deal, saved, onSave, onOpen }) {
 
 export function App() {
   const [deals, setDeals] = useState(DEALS);
-  const [origin, setOrigin] = useState("ALL");
-  const [minPrice, setMinPrice] = useState(0);
-  const [maxPrice, setMaxPrice] = useState(3000);
-  const [stopFilter, setStopFilter] = useState("any");
-  const [themes, setThemes] = useState([]);
-  const [sort, setSort] = useState("price");
+  const [origin, setOrigin] = usePersistentState("origin", "ALL");
+  const [minPrice, setMinPrice] = usePersistentState("minPrice", 0);
+  const [maxPrice, setMaxPrice] = usePersistentState("maxPrice", 3000);
+  const [stopFilter, setStopFilter] = usePersistentState("stops", "any");
+  const [themes, setThemes] = usePersistentState("themes", []);
+  const [sort, setSort] = usePersistentState("sort", "price");
   const [query, setQuery] = useState("");
   const [selectedDestination, setSelectedDestination] = useState(null);
   const [locationSuggestions, setLocationSuggestions] = useState([]);
   const [locationSearchOpen, setLocationSearchOpen] = useState(false);
   const [locationLoading, setLocationLoading] = useState(false);
-  const [saved, setSaved] = useState([1, 4, 8]);
+  // Saved deals are stored whole so live fares stay saved after a refresh or new search.
+  const [savedDeals, setSavedDeals] = usePersistentState("savedDeals", DEALS.filter((deal) => [1, 4, 8].includes(deal.id)));
+  const saved = useMemo(() => savedDeals.map((deal) => deal.id), [savedDeals]);
+  const [hoveredId, setHoveredId] = useState(null);
+  const searchInputRef = useRef(null);
   const [savedOnly, setSavedOnly] = useState(false);
   const [selected, setSelected] = useState(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -170,12 +224,12 @@ export function App() {
   const [liveStatusKind, setLiveStatusKind] = useState("info");
   const [liveLoading, setLiveLoading] = useState(false);
   const [apiHealth, setApiHealth] = useState("checking");
-  const [dateMode, setDateMode] = useState("anytime");
+  const [dateMode, setDateMode] = usePersistentState("dateMode", "anytime");
   const [outboundDate, setOutboundDate] = useState("");
   const [returnDate, setReturnDate] = useState("");
   const [travelMonth, setTravelMonth] = useState(monthValue(1));
-  const [minTripDays, setMinTripDays] = useState("4");
-  const [maxTripDays, setMaxTripDays] = useState("10");
+  const [minTripDays, setMinTripDays] = usePersistentState("minTripDays", "4");
+  const [maxTripDays, setMaxTripDays] = usePersistentState("maxTripDays", "10");
   const [selectedCountry, setSelectedCountry] = useState("ALL");
   const [weatherFilter, setWeatherFilter] = useState(false);
   const [minDryPercent, setMinDryPercent] = useState(80);
@@ -253,7 +307,28 @@ export function App() {
     };
   }, [query, selectedDestination?.name]);
 
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setSelected(null);
+        setRouteOpen(false);
+        setFiltersOpen(false);
+        return;
+      }
+      const typing = event.target.closest?.("input, select, textarea, [contenteditable]");
+      if (event.key === "/" && !typing && !event.metaKey && !event.ctrlKey) {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   const filtered = useMemo(() => {
+    if (savedOnly) {
+      return [...savedDeals].sort((a, b) => sort === "price" ? a.price - b.price : sort === "days" ? a.days - b.days : a.city.localeCompare(b.city));
+    }
     let result = deals.filter((deal) => {
       const originMatch = origin === "ALL" || (deal.origins || [deal.origin]).includes(origin);
       const stopMatch = stopFilter === "any" || deal.stops < Number(stopFilter);
@@ -263,25 +338,34 @@ export function App() {
       const queryMatch = searchTerms.length === 0 || searchTerms.every((term) => dealText.includes(term));
       const countryMatch = selectedCountry === "ALL" || deal.country === selectedCountry;
       const weatherMatch = !weatherFilter || (deal.weather?.available && deal.weather.dryPercent >= minDryPercent);
-      return originMatch && deal.price >= minPrice && deal.price <= maxPrice && stopMatch && themeMatch && queryMatch && countryMatch && weatherMatch && (!savedOnly || saved.includes(deal.id));
+      return originMatch && deal.price >= minPrice && deal.price <= maxPrice && stopMatch && themeMatch && queryMatch && countryMatch && weatherMatch;
     });
     return [...result].sort((a, b) => sort === "price" ? a.price - b.price : sort === "days" ? a.days - b.days : a.city.localeCompare(b.city));
-  }, [deals, origin, minPrice, maxPrice, stopFilter, themes, query, selectedCountry, weatherFilter, minDryPercent, savedOnly, saved, sort]);
+  }, [deals, origin, minPrice, maxPrice, stopFilter, themes, query, selectedCountry, weatherFilter, minDryPercent, savedOnly, savedDeals, sort]);
   const countries = useMemo(() => [...new Set(deals.map((deal) => deal.country).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [deals]);
   const budgetSummary = useMemo(() => {
-    if (selectedDestination || filtered.length === 0) return null;
+    if (selectedDestination || savedOnly || filtered.length === 0) return null;
     const cheapest = filtered.reduce((min, deal) => (deal.price < min.price ? deal : min), filtered[0]);
-    const dearest = filtered.reduce((max, deal) => (deal.price > max.price ? deal : max), filtered[0]);
-    return { count: filtered.length, cheapest, dearest, budget: maxPrice };
-  }, [filtered, selectedDestination, maxPrice]);
+    return {
+      count: filtered.length,
+      cheapest,
+      median: median(filtered.map((deal) => deal.price)),
+      direct: filtered.filter((deal) => deal.stops === 0).length,
+      budget: maxPrice,
+    };
+  }, [filtered, selectedDestination, savedOnly, maxPrice]);
 
   const toggleTheme = (theme) => setThemes((current) => current.includes(theme) ? current.filter((item) => item !== theme) : [...current, theme]);
-  const toggleSave = (id) => setSaved((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  const toggleSave = (deal) => setSavedDeals((current) => current.some((item) => item.id === deal.id) ? current.filter((item) => item.id !== deal.id) : [...current, deal]);
+  const setBudget = (value) => {
+    setMaxPrice(value);
+    setMinPrice((current) => Math.min(current, value - 50));
+  };
   const updateLiveStatus = (message, kind = "info") => {
     setLiveStatus(message);
     setLiveStatusKind(kind);
   };
-  const reset = () => { setMinPrice(0); setMaxPrice(3000); setStopFilter("any"); setThemes([]); setQuery(""); setSelectedDestination(null); setLocationSuggestions([]); setOrigin("ALL"); setSavedOnly(false); setDateMode("anytime"); setOutboundDate(""); setReturnDate(""); setTravelMonth(monthValue(1)); setMinTripDays("4"); setMaxTripDays("10"); setSelectedCountry("ALL"); setWeatherFilter(false); setMinDryPercent(80); };
+  const reset = () => { setMinPrice(0); setMaxPrice(3000); setStopFilter("any"); setThemes([]); setQuery(""); setSelectedDestination(null); setLocationSuggestions([]); setOrigin("ALL"); setSavedOnly(false); setSort("price"); setDateMode("anytime"); setOutboundDate(""); setReturnDate(""); setTravelMonth(monthValue(1)); setMinTripDays("4"); setMaxTripDays("10"); setSelectedCountry("ALL"); setWeatherFilter(false); setMinDryPercent(80); };
   const filterProps = { minPrice, setMinPrice, maxPrice, setMaxPrice, stopFilter, setStopFilter, themes, toggleTheme, reset, dateMode, setDateMode, outboundDate, setOutboundDate, returnDate, setReturnDate, travelMonth, setTravelMonth, minTripDays, setMinTripDays, maxTripDays, setMaxTripDays, selectedCountry, setSelectedCountry, countries, weatherFilter, setWeatherFilter, minDryPercent, setMinDryPercent };
   const loadLiveFares = async (overrides = {}) => {
     if (liveLoading) return;
@@ -495,8 +579,20 @@ export function App() {
       y: (mapSize.height - renderedHeight) / 2 + mercatorY * renderedHeight,
     };
   };
-  const penangPoint = projectLocation(5.4141, 100.3288);
-  const klPoint = projectLocation(3.139, 101.6869);
+  const penangPoint = projectLocation(HOME_AIRPORTS.PEN.lat, HOME_AIRPORTS.PEN.lon);
+  const klPoint = projectLocation(HOME_AIRPORTS.KUL.lat, HOME_AIRPORTS.KUL.lon);
+  const homePoints = { PEN: penangPoint, KUL: klPoint };
+  const mappedDeals = filtered.filter((deal) => Number.isFinite(deal.lat) && Number.isFinite(deal.lon));
+  const focusId = hoveredId ?? selected?.id ?? null;
+  const flightArcs = mapSize.width ? mappedDeals.flatMap((deal) => {
+    const to = projectLocation(deal.lat, deal.lon);
+    return (deal.origins || [deal.origin]).filter((code) => homePoints[code]).map((code) => ({
+      key: `${deal.id}-${code}`,
+      dealId: deal.id,
+      origin: code.toLowerCase(),
+      d: arcPath(homePoints[code], to),
+    }));
+  }) : [];
 
   return (
     <main className="app-shell">
@@ -518,7 +614,7 @@ export function App() {
           <div className="search-box-wrap">
             <label className={`search-box ${selectedDestination ? "selected" : ""}`}>
               <Icon>{selectedDestination ? "location_on" : "travel_explore"}</Icon>
-              <input aria-label="Worldwide destination search" value={query} onFocus={() => setLocationSearchOpen(true)} onBlur={() => window.setTimeout(() => setLocationSearchOpen(false), 150)} onChange={(event) => { setQuery(event.target.value); setSelectedDestination(null); setLocationSearchOpen(true); }} placeholder="Search destination airport or code..." autoComplete="off" />
+              <input ref={searchInputRef} aria-label="Worldwide destination search" value={query} onFocus={() => setLocationSearchOpen(true)} onBlur={() => window.setTimeout(() => setLocationSearchOpen(false), 150)} onChange={(event) => { setQuery(event.target.value); setSelectedDestination(null); setLocationSearchOpen(true); }} placeholder="Search destination airport or code..." autoComplete="off" />
               {locationLoading && <Icon className="spin location-loading">progress_activity</Icon>}
               {query && !locationLoading && <button type="button" className="location-clear" aria-label="Clear destination" onMouseDown={(event) => event.preventDefault()} onClick={() => { setQuery(""); setSelectedDestination(null); setLocationSuggestions([]); }}><Icon>close</Icon></button>}
             </label>
@@ -552,7 +648,7 @@ export function App() {
           <div className="budget-quickset">
             <span>Budget</span>
             {[1000, 1500, 2500, 4000].map((value) => (
-              <button key={value} className={maxPrice === value ? "active" : ""} onClick={() => setMaxPrice(value)}>{(value / 1000).toFixed(value % 1000 ? 1 : 0)}k</button>
+              <button key={value} className={maxPrice === value ? "active" : ""} onClick={() => setBudget(value)}>{(value / 1000).toFixed(value % 1000 ? 1 : 0)}k</button>
             ))}
           </div>
         </div>
@@ -560,13 +656,17 @@ export function App() {
         <section ref={mapRef} className={`map-panel ${mapDragging ? "dragging" : ""}`} onWheel={onMapWheel} onPointerDown={onMapPointerDown} onPointerMove={onMapPointerMove} onPointerUp={onMapPointerUp} onPointerCancel={onMapPointerUp}>
           <div className="map-scene" style={{ transform: `translate(${mapPan.x}px, ${mapPan.y}px) scale(${mapZoom})` }}>
             <img className="world-map" src="./assets/world-map-night.png" alt="Night-time world map" draggable="false" />
+            <div className="radar-sweep" style={{ left: (penangPoint.x + klPoint.x) / 2, top: (penangPoint.y + klPoint.y) / 2 }} aria-hidden="true"><i /><i /><i /></div>
+            <svg className={`flight-arcs ${focusId !== null ? "has-focus" : ""}`} width={mapSize.width} height={mapSize.height} aria-hidden="true">
+              {flightArcs.map((arc) => <path key={arc.key} d={arc.d} className={`arc origin-${arc.origin} ${arc.dealId === focusId ? "focused" : ""}`} />)}
+            </svg>
             <div className="origin-badge pen" style={{ left: penangPoint.x, top: penangPoint.y, "--pin-scale": 1 / mapZoom }}><Icon>flight</Icon> PEN</div>
             <div className="origin-badge kul" style={{ left: klPoint.x, top: klPoint.y, "--pin-scale": 1 / mapZoom }}><Icon>flight</Icon> KUL</div>
-            {filtered.filter((deal) => Number.isFinite(deal.lat) && Number.isFinite(deal.lon)).map((deal) => {
+            {mappedDeals.map((deal) => {
               const point = projectLocation(deal.lat, deal.lon);
               const dealOrigins = deal.origins || [deal.origin];
               const originClass = dealOrigins.length > 1 ? "both" : dealOrigins[0]?.toLowerCase();
-              return <button data-city={deal.city} key={deal.id} className={`map-pin origin-${originClass}`} style={{ left: point.x, top: point.y, "--pin-scale": 1 / mapZoom }} onClick={() => setSelected(deal)}>
+              return <button data-city={deal.city} key={deal.id} className={`map-pin origin-${originClass} ${deal.id === focusId ? "focused" : ""}`} style={{ left: point.x, top: point.y, "--pin-scale": 1 / mapZoom }} onClick={() => setSelected(deal)} onMouseEnter={() => setHoveredId(deal.id)} onMouseLeave={() => setHoveredId(null)} onFocus={() => setHoveredId(deal.id)} onBlur={() => setHoveredId(null)}>
                 <span className="pin-dot"><Icon>location_on</Icon></span>
                 <span className="pin-label"><strong>{deal.city}</strong><small>{dealOrigins.length > 1 ? "PEN + KUL" : dealOrigins[0]} · MYR {deal.price.toLocaleString()}</small></span>
               </button>;
@@ -574,8 +674,8 @@ export function App() {
           </div>
           <div className="map-shade" />
           <div className="map-heading">
-            <span>{dataMode === "live" ? "LIVE FARE DISCOVERY" : "DEMO DISCOVERY MAP"}</span>
-            <h2>{selectedDestination ? `${filtered.length} fares to ${selectedDestination.name}` : `${filtered.length} places within your budget`}</h2>
+            <span>{savedOnly ? "YOUR SAVED DEALS" : dataMode === "live" ? "LIVE FARE DISCOVERY" : "DEMO DISCOVERY MAP"}</span>
+            <h2>{savedOnly ? `${filtered.length} saved ${filtered.length === 1 ? "deal" : "deals"}` : selectedDestination ? `${filtered.length} fares to ${selectedDestination.name}` : `${filtered.length} places within your budget`}</h2>
             <p>{dateMode === "specific" && outboundDate && returnDate
               ? `${outboundDate} to ${returnDate}`
               : dateMode === "month"
@@ -583,7 +683,7 @@ export function App() {
                 : "Flexible return fares from Penang and Kuala Lumpur"}</p>
           </div>
           <div className="map-legend origin-legend"><span><i className="legend-dot pen" />From Penang</span><span><i className="legend-dot kul" />From Kuala Lumpur</span><span><i className="legend-dot both" />Both airports</span></div>
-          <div className="map-help"><Icon>open_with</Icon> Drag to pan · scroll to zoom</div>
+          <div className="map-help"><Icon>open_with</Icon> Drag to pan · scroll to zoom · press / to search</div>
           <div className="map-controls">
             <button onClick={() => setZoom(mapZoom + 0.25)} disabled={mapZoom >= 3.5} aria-label="Zoom in"><Icon>add</Icon></button>
             <button onClick={() => setZoom(mapZoom - 0.25)} disabled={mapZoom <= 1} aria-label="Zoom out"><Icon>remove</Icon></button>
@@ -594,7 +694,9 @@ export function App() {
 
         <section className="deals-section">
           <div className="deals-heading">
-            <div><span>BEST DEALS FROM</span><h2>{origin === "PEN" ? "PENANG" : origin === "KUL" ? "KUALA LUMPUR" : "PENANG & KUALA LUMPUR"}</h2></div>
+            <div>{savedOnly
+              ? <><span>YOUR</span><h2>SAVED DEALS</h2></>
+              : <><span>BEST DEALS FROM</span><h2>{origin === "PEN" ? "PENANG" : origin === "KUL" ? "KUALA LUMPUR" : "PENANG & KUALA LUMPUR"}</h2></>}</div>
             {liveStatus && <p className={`live-status ${liveStatusKind}`}>{liveStatus}</p>}
             <label>Sort by
               <select value={sort} onChange={(e) => setSort(e.target.value)}>
@@ -609,23 +711,29 @@ export function App() {
               <span>BUDGET REACH</span>
               <strong>{budgetSummary.count} {budgetSummary.count === 1 ? "destination" : "destinations"} within MYR {budgetSummary.budget.toLocaleString()}</strong>
             </div>
-            <div className="budget-banner-pick">
+            <div className="budget-banner-stats">
+              <span><small>Median fare</small><b>MYR {budgetSummary.median.toLocaleString()}</b></span>
+              <span><small>Direct flights</small><b>{budgetSummary.direct} of {budgetSummary.count}</b></span>
+            </div>
+            <button type="button" className="budget-banner-pick" onClick={() => setSelected(budgetSummary.cheapest)}>
               <small>Cheapest</small>
               <b>{budgetSummary.cheapest.city}</b>
               <span className="budget-banner-price">MYR {budgetSummary.cheapest.price.toLocaleString()}</span>
-            </div>
+            </button>
           </div>}
           <div className="deal-rail">
-            {filtered.length ? filtered.map((deal) => <DealCard key={deal.id} deal={deal} saved={saved.includes(deal.id)} onSave={toggleSave} onOpen={setSelected} />) : (
+            {filtered.length ? filtered.map((deal) => <DealCard key={deal.id} deal={deal} saved={saved.includes(deal.id)} onSave={toggleSave} onOpen={setSelected} highlighted={deal.id === focusId} onHover={setHoveredId} />) : (
               <div className="empty-state">
-                <Icon>{selectedDestination ? "travel_explore" : weatherFilter ? "rainy" : "flight_takeoff"}</Icon>
-                <h3>{selectedDestination && dataMode === "demo" ? `Search fares to ${selectedDestination.name}` : "No fares match those filters"}</h3>
-                <p>{selectedDestination && dataMode === "demo"
+                <Icon>{savedOnly ? "bookmark" : selectedDestination ? "travel_explore" : weatherFilter ? "rainy" : "flight_takeoff"}</Icon>
+                <h3>{savedOnly ? "No saved deals yet" : selectedDestination && dataMode === "demo" ? `Search fares to ${selectedDestination.name}` : "No fares match those filters"}</h3>
+                <p>{savedOnly
+                  ? "Tap the bookmark on any fare to keep it here, even after new searches."
+                  : selectedDestination && dataMode === "demo"
                   ? "Run a live search to find current fares for this destination and trip range."
                   : weatherFilter
                     ? `No destination has ${minDryPercent}% forecast dry days for this trip.`
                     : "Try wider travel dates, trip days, or fare range."}</p>
-                <button onClick={selectedDestination && dataMode === "demo" ? loadLiveFares : reset}>{selectedDestination && dataMode === "demo" ? "Search live fares" : "Reset filters"}</button>
+                <button onClick={savedOnly ? () => setSavedOnly(false) : selectedDestination && dataMode === "demo" ? loadLiveFares : reset}>{savedOnly ? "Browse deals" : selectedDestination && dataMode === "demo" ? "Search live fares" : "Reset filters"}</button>
               </div>
             )}
           </div>
@@ -646,7 +754,7 @@ export function App() {
               </a>)}
             </div>}
             <div className="drawer-grid"><span><Icon>calendar_month</Icon><small>Travel dates</small><b>{selected.date}</b></span><span><Icon>schedule</Icon><small>Trip length</small><b>{selected.days} days</b></span><span><Icon>connecting_airports</Icon><small>Stops</small><b>{selected.stops === 0 ? "Direct" : `${selected.stops} stop${selected.stops > 1 ? "s" : ""}`}</b></span><span><Icon>airlines</Icon><small>Airline</small><b>{selected.airline || "Live fares only"}</b></span><span><Icon>partly_cloudy_day</Icon><small>Dry-day forecast</small><b>{selected.weather?.available ? `${selected.weather.dryPercent}% · ${selected.weather.dryDays}/${selected.weather.totalDays} days` : "Unavailable beyond 16 days"}</b></span><span><Icon>public</Icon><small>Country</small><b>{selected.country}</b></span></div>
-            <button className="primary-button" onClick={() => toggleSave(selected.id)}><Icon>{saved.includes(selected.id) ? "bookmark_added" : "bookmark_add"}</Icon>{saved.includes(selected.id) ? "Saved to your deals" : "Save this deal"}</button>
+            <button className="primary-button" onClick={() => toggleSave(selected)}><Icon>{saved.includes(selected.id) ? "bookmark_added" : "bookmark_add"}</Icon>{saved.includes(selected.id) ? "Saved to your deals" : "Save this deal"}</button>
             <p className="drawer-note">{selected.theme === "Live" ? "Live fare discovered through Google Travel Explore. Open an airport offer above to continue." : "Demo fare. Load live fares to see current airlines and booking links."}</p>
           </div>
         </aside>

@@ -11,7 +11,11 @@ A modern flight-discovery dashboard for finding affordable worldwide trips from 
 - Minimum and maximum fare filtering
 - Separate PEN, KUL, and both-airport results
 - Airline, stops, country, weather, sorting, and saved-deal controls
-- Zoomable worldwide map
+- Zoomable worldwide radar map with animated flight-path arcs; hovering a pin or fare card highlights its route
+- Budget insights: destinations in reach, median fare, direct-flight count, and cheapest pick
+- Saved deals and filter preferences persist in the browser, including saved live fares
+- Keyboard shortcuts: `/` focuses destination search, `Esc` closes panels
+- Server-side 10-minute cache of SerpApi responses so repeated searches do not spend extra quota (hit/miss counts at `/api/status`)
 
 ## Run Locally
 
