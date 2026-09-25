@@ -3,6 +3,42 @@ import { useEffect, useMemo, useRef, useState } from "react";
 const STORAGE_PREFIX = "global-radar:";
 const HOME_AIRPORTS = { PEN: { lat: 5.2971, lon: 100.2769 }, KUL: { lat: 2.7456, lon: 101.7099 } };
 
+// Search settings carried in a shared link (?from=KUL&max=1500&...). They override
+// remembered preferences for this visit so the recipient sees the same search.
+const SHARED = (() => {
+  try {
+    return new URLSearchParams(window.location.search);
+  } catch {
+    return new URLSearchParams();
+  }
+})();
+function sharedValue(name, isValid, parse = (value) => value) {
+  const raw = SHARED.get(name);
+  if (raw === null || !isValid(raw)) return undefined;
+  return parse(raw);
+}
+const isFare = (value) => /^\d{1,4}$/.test(value) && Number(value) <= 5000;
+const isIsoDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value);
+const isTripDays = (value) => /^\d{1,2}$/.test(value) && Number(value) >= 2 && Number(value) <= 21;
+const SHARED_SEARCH = {
+  origin: sharedValue("from", (value) => ["ALL", "PEN", "KUL"].includes(value)),
+  minPrice: sharedValue("min", isFare, Number),
+  maxPrice: sharedValue("max", isFare, Number),
+  stops: sharedValue("stops", (value) => ["any", "1", "2", "3"].includes(value)),
+  dateMode: sharedValue("dates", (value) => ["anytime", "specific", "month"].includes(value)),
+  outboundDate: sharedValue("depart", isIsoDate),
+  returnDate: sharedValue("return", isIsoDate),
+  travelMonth: sharedValue("month", (value) => /^\d{4}-\d{2}$/.test(value)),
+  minTripDays: sharedValue("minDays", isTripDays),
+  maxTripDays: sharedValue("maxDays", isTripDays),
+  destination: SHARED.get("to") && /^[A-Z]{3}$/.test(SHARED.get("to")) && SHARED.get("toName")
+    ? { id: SHARED.get("to"), type: "airport", name: SHARED.get("toName").slice(0, 120), description: (SHARED.get("toDesc") || "").slice(0, 120) }
+    : null,
+};
+if (SHARED_SEARCH.minPrice !== undefined && SHARED_SEARCH.maxPrice !== undefined && SHARED_SEARCH.minPrice >= SHARED_SEARCH.maxPrice) {
+  SHARED_SEARCH.minPrice = undefined;
+}
+
 const DEALS = [
   { id: 1, city: "Bali", country: "Indonesia", price: 480, origin: "PEN", date: "Jun 5 – Jun 12", days: 7, stops: 0, theme: "Beach", lat: -8.65, lon: 115.216, accent: "gold", image: "https://images.unsplash.com/photo-1537996194471-e657df975ab4?auto=format&fit=crop&w=700&q=85" },
   { id: 2, city: "Manila", country: "Philippines", price: 680, origin: "KUL", date: "Jun 3 – Jun 9", days: 6, stops: 0, theme: "City", lat: 14.5995, lon: 120.9842, accent: "teal", image: "https://images.unsplash.com/photo-1518509562904-e7ef99cdcc86?auto=format&fit=crop&w=700&q=85" },
@@ -45,8 +81,8 @@ function readStored(key, fallback) {
 
 // useState that mirrors its value into localStorage. Storage can be unavailable
 // (private windows, blocked site data), so every access is guarded.
-function usePersistentState(key, fallback) {
-  const [value, setValue] = useState(() => readStored(key, fallback));
+function usePersistentState(key, fallback, override) {
+  const [value, setValue] = useState(() => override !== undefined ? override : readStored(key, fallback));
   useEffect(() => {
     try {
       window.localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(value));
@@ -79,6 +115,33 @@ function arcPath(from, to) {
   let ny = dx / distance;
   if (ny > 0) { nx = -nx; ny = -ny; }
   return `M${from.x.toFixed(1)},${from.y.toFixed(1)} Q${(midX + nx * lift).toFixed(1)},${(midY + ny * lift).toFixed(1)} ${to.x.toFixed(1)},${to.y.toFixed(1)}`;
+}
+
+// A Google Flights search for any deal. Live fares carry ISO dates ("2026-11-02 – 2026-11-09");
+// demo fares only have display dates, so those links search the route without dates.
+function googleFlightsSearchUrl(deal, fallbackOrigin) {
+  const from = (deal.origins || [deal.origin]).find((code) => HOME_AIRPORTS[code]) || (HOME_AIRPORTS[fallbackOrigin] ? fallbackOrigin : "KUL");
+  const [start, end] = String(deal.date || "").split(" – ");
+  const dates = isIsoDate(start || "") && isIsoDate(end || "") ? ` on ${start} through ${end}` : "";
+  const query = `Flights from ${from} to ${deal.city}${dates}`;
+  return `https://www.google.com/travel/flights?hl=en&curr=MYR&q=${encodeURIComponent(query)}`;
+}
+
+// Greedy map-label placement: cheapest fares claim label space first. A label that
+// would overlap tries the left side of its pin, then collapses to its dot (shown again
+// on hover/focus).
+const PIN_DOT_RADIUS = 13;
+const LABEL_HEIGHT = 30;
+function labelBox(point, city, side) {
+  const width = Math.max(75, city.length * 8 + 18);
+  const top = point.y - LABEL_HEIGHT / 2;
+  const bottom = point.y + LABEL_HEIGHT / 2;
+  return side === "left"
+    ? { left: point.x - PIN_DOT_RADIUS - width, right: point.x + PIN_DOT_RADIUS, top, bottom }
+    : { left: point.x - PIN_DOT_RADIUS, right: point.x + PIN_DOT_RADIUS + width, top, bottom };
+}
+function boxesOverlap(a, b) {
+  return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 }
 
 function searchableText(value) {
@@ -200,14 +263,14 @@ function DealCard({ deal, saved, onSave, onOpen, highlighted, onHover }) {
 
 export function App() {
   const [deals, setDeals] = useState(DEALS);
-  const [origin, setOrigin] = usePersistentState("origin", "ALL");
-  const [minPrice, setMinPrice] = usePersistentState("minPrice", 0);
-  const [maxPrice, setMaxPrice] = usePersistentState("maxPrice", 3000);
-  const [stopFilter, setStopFilter] = usePersistentState("stops", "any");
+  const [origin, setOrigin] = usePersistentState("origin", "ALL", SHARED_SEARCH.origin);
+  const [minPrice, setMinPrice] = usePersistentState("minPrice", 0, SHARED_SEARCH.minPrice);
+  const [maxPrice, setMaxPrice] = usePersistentState("maxPrice", 3000, SHARED_SEARCH.maxPrice);
+  const [stopFilter, setStopFilter] = usePersistentState("stops", "any", SHARED_SEARCH.stops);
   const [themes, setThemes] = usePersistentState("themes", []);
   const [sort, setSort] = usePersistentState("sort", "price");
-  const [query, setQuery] = useState("");
-  const [selectedDestination, setSelectedDestination] = useState(null);
+  const [query, setQuery] = useState(SHARED_SEARCH.destination?.name || "");
+  const [selectedDestination, setSelectedDestination] = useState(SHARED_SEARCH.destination);
   const [locationSuggestions, setLocationSuggestions] = useState([]);
   const [locationSearchOpen, setLocationSearchOpen] = useState(false);
   const [locationLoading, setLocationLoading] = useState(false);
@@ -224,12 +287,12 @@ export function App() {
   const [liveStatusKind, setLiveStatusKind] = useState("info");
   const [liveLoading, setLiveLoading] = useState(false);
   const [apiHealth, setApiHealth] = useState("checking");
-  const [dateMode, setDateMode] = usePersistentState("dateMode", "anytime");
-  const [outboundDate, setOutboundDate] = useState("");
-  const [returnDate, setReturnDate] = useState("");
-  const [travelMonth, setTravelMonth] = useState(monthValue(1));
-  const [minTripDays, setMinTripDays] = usePersistentState("minTripDays", "4");
-  const [maxTripDays, setMaxTripDays] = usePersistentState("maxTripDays", "10");
+  const [dateMode, setDateMode] = usePersistentState("dateMode", "anytime", SHARED_SEARCH.dateMode);
+  const [outboundDate, setOutboundDate] = useState(SHARED_SEARCH.outboundDate || "");
+  const [returnDate, setReturnDate] = useState(SHARED_SEARCH.returnDate || "");
+  const [travelMonth, setTravelMonth] = useState(SHARED_SEARCH.travelMonth || monthValue(1));
+  const [minTripDays, setMinTripDays] = usePersistentState("minTripDays", "4", SHARED_SEARCH.minTripDays);
+  const [maxTripDays, setMaxTripDays] = usePersistentState("maxTripDays", "10", SHARED_SEARCH.maxTripDays);
   const [selectedCountry, setSelectedCountry] = useState("ALL");
   const [weatherFilter, setWeatherFilter] = useState(false);
   const [minDryPercent, setMinDryPercent] = useState(80);
@@ -325,6 +388,43 @@ export function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  const shareParams = useMemo(() => {
+    const params = new URLSearchParams();
+    if (origin !== "ALL") params.set("from", origin);
+    if (minPrice !== 0) params.set("min", String(minPrice));
+    if (maxPrice !== 3000) params.set("max", String(maxPrice));
+    if (stopFilter !== "any") params.set("stops", stopFilter);
+    if (dateMode !== "anytime") params.set("dates", dateMode);
+    if (dateMode === "specific") {
+      if (outboundDate) params.set("depart", outboundDate);
+      if (returnDate) params.set("return", returnDate);
+    }
+    if (dateMode === "month") {
+      params.set("month", travelMonth);
+      params.set("minDays", String(minTripDays));
+      params.set("maxDays", String(maxTripDays));
+    }
+    if (selectedDestination && /^[A-Z]{3}$/.test(selectedDestination.id)) {
+      params.set("to", selectedDestination.id);
+      params.set("toName", selectedDestination.name);
+      if (selectedDestination.description) params.set("toDesc", selectedDestination.description);
+    }
+    return params.toString();
+  }, [origin, minPrice, maxPrice, stopFilter, dateMode, outboundDate, returnDate, travelMonth, minTripDays, maxTripDays, selectedDestination]);
+
+  // Keep the address bar in step with the search so it can be bookmarked or shared.
+  useEffect(() => {
+    if (window.location.protocol === "file:") return;
+    const next = `${window.location.pathname}${shareParams ? `?${shareParams}` : ""}${window.location.hash}`;
+    if (next !== `${window.location.pathname}${window.location.search}${window.location.hash}`) {
+      try {
+        window.history.replaceState(null, "", next);
+      } catch {
+        // Some embedded contexts block history updates; sharing still copies the link.
+      }
+    }
+  }, [shareParams]);
+
   const filtered = useMemo(() => {
     if (savedOnly) {
       return [...savedDeals].sort((a, b) => sort === "price" ? a.price - b.price : sort === "days" ? a.days - b.days : a.city.localeCompare(b.city));
@@ -357,6 +457,15 @@ export function App() {
 
   const toggleTheme = (theme) => setThemes((current) => current.includes(theme) ? current.filter((item) => item !== theme) : [...current, theme]);
   const toggleSave = (deal) => setSavedDeals((current) => current.some((item) => item.id === deal.id) ? current.filter((item) => item.id !== deal.id) : [...current, deal]);
+  const shareSearch = async () => {
+    const link = `${window.location.origin}${window.location.pathname}${shareParams ? `?${shareParams}` : ""}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      updateLiveStatus("Search link copied. Anyone opening it sees these filters and dates.", "success");
+    } catch {
+      window.prompt("Copy this search link:", link);
+    }
+  };
   const setBudget = (value) => {
     setMaxPrice(value);
     setMinPrice((current) => Math.min(current, value - 50));
@@ -584,6 +693,31 @@ export function App() {
   const homePoints = { PEN: penangPoint, KUL: klPoint };
   const mappedDeals = filtered.filter((deal) => Number.isFinite(deal.lat) && Number.isFinite(deal.lon));
   const focusId = hoveredId ?? selected?.id ?? null;
+  const toScreen = (point) => ({
+    x: mapSize.width / 2 + (point.x - mapSize.width / 2) * mapZoom + mapPan.x,
+    y: mapSize.height / 2 + (point.y - mapSize.height / 2) * mapZoom + mapPan.y,
+  });
+  const labelSides = (() => {
+    const sides = new Map();
+    // Home-airport badges sit up-left of PEN and down-left of KUL; keep labels off them.
+    const pen = toScreen(penangPoint);
+    const kul = toScreen(klPoint);
+    const taken = [
+      { left: pen.x - 70, right: pen.x + 6, top: pen.y - 34, bottom: pen.y + 6 },
+      { left: kul.x - 70, right: kul.x + 6, top: kul.y - 6, bottom: kul.y + 34 },
+    ];
+    const byPrice = [...mappedDeals].sort((a, b) => (b.id === focusId) - (a.id === focusId) || a.price - b.price);
+    for (const deal of byPrice) {
+      const point = toScreen(projectLocation(deal.lat, deal.lon));
+      const side = ["right", "left"].find((candidate) => !taken.some((other) => boxesOverlap(labelBox(point, deal.city, candidate), other)))
+        || (deal.id === focusId ? "right" : null);
+      if (side) {
+        sides.set(deal.id, side);
+        taken.push(labelBox(point, deal.city, side));
+      }
+    }
+    return sides;
+  })();
   const flightArcs = mapSize.width ? mappedDeals.flatMap((deal) => {
     const to = projectLocation(deal.lat, deal.lon);
     return (deal.origins || [deal.origin]).filter((code) => homePoints[code]).map((code) => ({
@@ -645,6 +779,7 @@ export function App() {
               <span>{liveLoading ? "Scanning…" : `Where can MYR ${maxPrice.toLocaleString()} take me?`}</span>
             </button>
           )}
+          <button type="button" className="share-button" onClick={shareSearch} title="Copy a link to this search"><Icon>ios_share</Icon><span>Share search</span></button>
           <div className="budget-quickset">
             <span>Budget</span>
             {[1000, 1500, 2500, 4000].map((value) => (
@@ -660,13 +795,13 @@ export function App() {
             <svg className={`flight-arcs ${focusId !== null ? "has-focus" : ""}`} width={mapSize.width} height={mapSize.height} aria-hidden="true">
               {flightArcs.map((arc) => <path key={arc.key} d={arc.d} className={`arc origin-${arc.origin} ${arc.dealId === focusId ? "focused" : ""}`} />)}
             </svg>
-            <div className="origin-badge pen" style={{ left: penangPoint.x, top: penangPoint.y, "--pin-scale": 1 / mapZoom }}><Icon>flight</Icon> PEN</div>
-            <div className="origin-badge kul" style={{ left: klPoint.x, top: klPoint.y, "--pin-scale": 1 / mapZoom }}><Icon>flight</Icon> KUL</div>
+            <div className="origin-marker pen" style={{ left: penangPoint.x, top: penangPoint.y, "--pin-scale": 1 / mapZoom }}><i className="origin-dot" /><span className="origin-badge"><Icon>flight</Icon> PEN</span></div>
+            <div className="origin-marker kul" style={{ left: klPoint.x, top: klPoint.y, "--pin-scale": 1 / mapZoom }}><i className="origin-dot" /><span className="origin-badge"><Icon>flight</Icon> KUL</span></div>
             {mappedDeals.map((deal) => {
               const point = projectLocation(deal.lat, deal.lon);
               const dealOrigins = deal.origins || [deal.origin];
               const originClass = dealOrigins.length > 1 ? "both" : dealOrigins[0]?.toLowerCase();
-              return <button data-city={deal.city} key={deal.id} className={`map-pin origin-${originClass} ${deal.id === focusId ? "focused" : ""}`} style={{ left: point.x, top: point.y, "--pin-scale": 1 / mapZoom }} onClick={() => setSelected(deal)} onMouseEnter={() => setHoveredId(deal.id)} onMouseLeave={() => setHoveredId(null)} onFocus={() => setHoveredId(deal.id)} onBlur={() => setHoveredId(null)}>
+              return <button data-city={deal.city} key={deal.id} className={`map-pin origin-${originClass} ${deal.id === focusId ? "focused" : ""} ${labelSides.get(deal.id) === "left" ? "label-left" : labelSides.has(deal.id) ? "" : "compact"}`} aria-label={`${deal.city}, MYR ${deal.price.toLocaleString()}`} style={{ left: point.x, top: point.y, "--pin-scale": 1 / mapZoom }} onClick={() => setSelected(deal)} onMouseEnter={() => setHoveredId(deal.id)} onMouseLeave={() => setHoveredId(null)} onFocus={() => setHoveredId(deal.id)} onBlur={() => setHoveredId(null)}>
                 <span className="pin-dot"><Icon>location_on</Icon></span>
                 <span className="pin-label"><strong>{deal.city}</strong><small>{dealOrigins.length > 1 ? "PEN + KUL" : dealOrigins[0]} · MYR {deal.price.toLocaleString()}</small></span>
               </button>;
@@ -754,6 +889,7 @@ export function App() {
               </a>)}
             </div>}
             <div className="drawer-grid"><span><Icon>calendar_month</Icon><small>Travel dates</small><b>{selected.date}</b></span><span><Icon>schedule</Icon><small>Trip length</small><b>{selected.days} days</b></span><span><Icon>connecting_airports</Icon><small>Stops</small><b>{selected.stops === 0 ? "Direct" : `${selected.stops} stop${selected.stops > 1 ? "s" : ""}`}</b></span><span><Icon>airlines</Icon><small>Airline</small><b>{selected.airline || "Live fares only"}</b></span><span><Icon>partly_cloudy_day</Icon><small>Dry-day forecast</small><b>{selected.weather?.available ? `${selected.weather.dryPercent}% · ${selected.weather.dryDays}/${selected.weather.totalDays} days` : "Unavailable beyond 16 days"}</b></span><span><Icon>public</Icon><small>Country</small><b>{selected.country}</b></span></div>
+            <a className="secondary-button" href={googleFlightsSearchUrl(selected, origin)} target="_blank" rel="noreferrer"><Icon>open_in_new</Icon>Search this trip on Google Flights</a>
             <button className="primary-button" onClick={() => toggleSave(selected)}><Icon>{saved.includes(selected.id) ? "bookmark_added" : "bookmark_add"}</Icon>{saved.includes(selected.id) ? "Saved to your deals" : "Save this deal"}</button>
             <p className="drawer-note">{selected.theme === "Live" ? "Live fare discovered through Google Travel Explore. Open an airport offer above to continue." : "Demo fare. Load live fares to see current airlines and booking links."}</p>
           </div>

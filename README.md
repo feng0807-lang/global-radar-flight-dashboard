@@ -14,6 +14,9 @@ A modern flight-discovery dashboard for finding affordable worldwide trips from 
 - Zoomable worldwide radar map with animated flight-path arcs; hovering a pin or fare card highlights its route
 - Budget insights: destinations in reach, median fare, direct-flight count, and cheapest pick
 - Saved deals and filter preferences persist in the browser, including saved live fares
+- Map labels declutter automatically: cheaper fares keep their labels, others flip sides or collapse to a dot that expands on hover; zooming in reveals more
+- Shareable searches: the address bar tracks airport, fare range, stops, dates, and destination, and **Share search** copies the link
+- Every deal links straight to a matching Google Flights search
 - Keyboard shortcuts: `/` focuses destination search, `Esc` closes panels
 - Server-side 10-minute cache of SerpApi responses so repeated searches do not spend extra quota (hit/miss counts at `/api/status`)
 
