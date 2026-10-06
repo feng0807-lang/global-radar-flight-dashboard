@@ -204,7 +204,8 @@ export function App() {
 
   // Keep the address bar in step with the search so it can be bookmarked or shared.
   useEffect(() => {
-    if (window.location.protocol === "file:") return;
+    // The flight search view keeps its own search in the address bar.
+    if (window.location.protocol === "file:" || view === "flights") return;
     const next = `${window.location.pathname}${shareParams ? `?${shareParams}` : ""}${window.location.hash}`;
     if (next !== `${window.location.pathname}${window.location.search}${window.location.hash}`) {
       try {

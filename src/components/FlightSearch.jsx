@@ -3,6 +3,7 @@ import { Icon } from "./Icon.jsx";
 import { Dialog } from "./Dialog.jsx";
 import { usePersistentState } from "../storage.js";
 import { daysFromToday, isIsoDate } from "../dates.js";
+import { PriceHistory } from "./PriceHistory.jsx";
 import {
   activeFilterCount,
   DAY_MINUTES,
@@ -45,6 +46,63 @@ function validForm(value) {
   return value && typeof value === "object" && ["ALL", "PEN", "KUL"].includes(value.from)
     && (value.depart === "" || (isIsoDate(value.depart) && daysFromToday(value.depart) >= 0));
 }
+
+function addDays(iso, days) {
+  const date = new Date(`${iso}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+// Query string for /api/flights/search and for shareable links (shared links add view=flights).
+export function flightQuery(form) {
+  const params = new URLSearchParams({
+    from: form.from,
+    to: form.to?.id || "",
+    depart: form.depart,
+    trip: form.trip,
+    adults: String(form.adults),
+    children: String(form.children),
+    infants: String(form.infants),
+    cabin: form.cabin,
+    bags: String(form.bags),
+  });
+  if (form.trip === "round") params.set("return", form.return);
+  if (form.to?.name && form.to.name !== form.to.id) params.set("toName", form.to.name);
+  return params;
+}
+
+// A flight search carried in a shared link (?view=flights&to=NRT&depart=...). Invalid
+// links are ignored; the persisted form is used instead.
+function formFromLink() {
+  let params;
+  try {
+    params = new URLSearchParams(window.location.search);
+  } catch {
+    return undefined;
+  }
+  if (params.get("view") !== "flights" || !/^[A-Z]{3}$/.test(params.get("to") || "")) return undefined;
+  const int = (name, fallback, min, max) => {
+    const value = Number(params.get(name) ?? fallback);
+    return Number.isInteger(value) && value >= min && value <= max ? value : fallback;
+  };
+  const form = {
+    ...DEFAULT_FORM,
+    from: ["ALL", "PEN", "KUL"].includes(params.get("from")) ? params.get("from") : "ALL",
+    to: { id: params.get("to"), name: (params.get("toName") || params.get("to")).slice(0, 120), description: "" },
+    trip: params.get("trip") === "oneway" ? "oneway" : "round",
+    depart: isIsoDate(params.get("depart") || "") && daysFromToday(params.get("depart")) >= 0 ? params.get("depart") : "",
+    return: isIsoDate(params.get("return") || "") ? params.get("return") : "",
+    adults: int("adults", 1, 1, 9),
+    children: int("children", 0, 0, 8),
+    infants: int("infants", 0, 0, 4),
+    cabin: ["1", "2", "3", "4"].includes(params.get("cabin")) ? params.get("cabin") : "1",
+    bags: int("bags", 0, 0, 2),
+  };
+  if (form.infants > form.adults) form.infants = form.adults;
+  if (form.return && form.return < form.depart) form.return = "";
+  return form;
+}
+const LINKED_FORM = formFromLink();
 
 function AirportField({ label, value, onChange }) {
   const [text, setText] = useState(value?.name || "");
@@ -377,8 +435,44 @@ function PriceInsights({ insights, cheapest }) {
   );
 }
 
+function NearbyDates({ nearby, loading, searchesPerDate, onCompare, onPick, roundTrip }) {
+  const fmt = (iso) => new Date(`${iso}T00:00:00Z`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+  if (!nearby) {
+    return (
+      <div className="fs-nearby fs-nearby-offer">
+        <span><b>Compare nearby dates</b><small>Cheapest fare for each date{roundTrip ? ", same trip length" : ""}.</small></span>
+        <button type="button" onClick={() => onCompare(1)}>±1 day <small>({2 * searchesPerDate} searches)</small></button>
+        <button type="button" onClick={() => onCompare(3)}>±3 days <small>({6 * searchesPerDate} searches)</small></button>
+      </div>
+    );
+  }
+  const priced = nearby.filter((entry) => entry.price !== null);
+  const cheapest = priced.length ? Math.min(...priced.map((entry) => entry.price)) : null;
+  return (
+    <div className="fs-nearby" aria-busy={loading}>
+      <span className="fs-nearby-title"><b>Nearby dates</b>{loading && <small> · checking…</small>}</span>
+      <div className="fs-nearby-grid">
+        {nearby.map((entry) => (
+          <button
+            type="button"
+            key={entry.offset}
+            className={`${entry.offset === 0 ? "current" : ""} ${entry.price !== null && entry.price === cheapest ? "cheapest" : ""}`}
+            disabled={entry.offset === 0 || entry.price === null}
+            onClick={() => onPick(entry)}
+            aria-label={`${fmt(entry.depart)}${entry.return ? ` to ${fmt(entry.return)}` : ""}: ${entry.price === null ? "no flights" : `from MYR ${entry.price.toLocaleString()}`}${entry.price === cheapest ? ", cheapest" : ""}`}
+          >
+            <small>{fmt(entry.depart)}{entry.return ? ` – ${fmt(entry.return)}` : ""}</small>
+            <b>{entry.price === null ? "—" : `MYR ${entry.price.toLocaleString()}`}</b>
+            {entry.price !== null && entry.price === cheapest && <i>Cheapest</i>}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
-  const [form, setForm] = usePersistentState("flightSearchForm", { ...DEFAULT_FORM, from: defaultOrigin }, undefined, validForm);
+  const [form, setForm] = usePersistentState("flightSearchForm", { ...DEFAULT_FORM, from: defaultOrigin }, LINKED_FORM, validForm);
   const [filters, setFilters] = usePersistentState("flightFilters", DEFAULT_FLIGHT_FILTERS, undefined, (value) => value && typeof value === "object" && Array.isArray(value.departWindow));
   const [sort, setSort] = usePersistentState("flightSort", "best", undefined, (value) => value in SORTS);
   const [results, setResults] = useState(null);
@@ -388,35 +482,28 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
   const [expandedId, setExpandedId] = useState(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const outboundResults = useRef(null);
+  const [searched, setSearched] = useState(null); // the form behind the current results
+  const [nearby, setNearby] = useState(null);
+  const [nearbyLoading, setNearbyLoading] = useState(false);
 
   const flights = useMemo(() => results?.flights || [], [results]);
   const facets = useMemo(() => flightFacets(flights), [flights]);
   const shown = useMemo(() => filterAndSortFlights(flights, filters, sort), [flights, filters, sort]);
   const mode = form.trip === "oneway" ? "oneway" : outbound ? "round-return" : "round-outbound";
 
-  const runSearch = async (departureToken = "", fromOverride = null) => {
-    const to = form.to?.id;
-    if (!to) return setStatus({ message: "Choose where you are flying to.", kind: "error" });
-    if (!form.depart) return setStatus({ message: "Choose a departure date.", kind: "error" });
-    if (form.trip === "round" && !form.return) return setStatus({ message: "Choose a return date, or switch to One way.", kind: "error" });
-    const params = new URLSearchParams({
-      from: fromOverride || form.from,
-      to,
-      depart: form.depart,
-      trip: form.trip,
-      adults: String(form.adults),
-      children: String(form.children),
-      infants: String(form.infants),
-      cabin: form.cabin,
-      bags: String(form.bags),
-    });
-    if (form.trip === "round") params.set("return", form.return);
+  const runSearch = async (departureToken = "", fromOverride = null, searchForm = form) => {
+    if (!searchForm.to?.id) return setStatus({ message: "Choose where you are flying to.", kind: "error" });
+    if (!searchForm.depart) return setStatus({ message: "Choose a departure date.", kind: "error" });
+    if (searchForm.trip === "round" && !searchForm.return) return setStatus({ message: "Choose a return date, or switch to One way.", kind: "error" });
+    const params = flightQuery(searchForm);
+    params.delete("toName");
+    if (fromOverride) params.set("from", fromOverride);
     if (departureToken) params.set("departureToken", departureToken);
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 60000);
     setLoading(true);
     setExpandedId(null);
-    setStatus({ message: departureToken ? "Finding return flights…" : `Searching flights to ${form.to.name}…`, kind: "info" });
+    setStatus({ message: departureToken ? "Finding return flights…" : `Searching flights to ${searchForm.to.name}…`, kind: "info" });
     try {
       const response = await fetch(`/api/flights/search?${params}`, { signal: controller.signal });
       const payload = await response.json().catch(() => null);
@@ -437,10 +524,73 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
     }
   };
 
-  const search = async () => {
+  const search = async (searchForm = form) => {
     setOutbound(null);
     outboundResults.current = null;
-    await runSearch();
+    setNearby(null);
+    const payload = await runSearch("", null, searchForm);
+    if (payload) setSearched(searchForm);
+  };
+
+  // A shared link opens straight onto its results, like a Google Flights link.
+  useEffect(() => {
+    if (LINKED_FORM?.depart && (LINKED_FORM.trip === "oneway" || LINKED_FORM.return)) search(LINKED_FORM);
+    // Runs once on mount; LINKED_FORM never changes.
+    // (search is recreated each render but only reads its argument here.)
+  }, []);
+
+  // Keep the address bar on the last completed search so it can be shared.
+  useEffect(() => {
+    // Leave a shared link in place until its own search has completed.
+    if (window.location.protocol === "file:" || (!searched && LINKED_FORM)) return;
+    const params = searched?.to?.id ? flightQuery(searched) : new URLSearchParams();
+    params.set("view", "flights");
+    try {
+      window.history.replaceState(null, "", `${window.location.pathname}?${params}`);
+    } catch {
+      // History updates can be blocked in embedded contexts.
+    }
+  }, [searched]);
+  const shareSearch = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setStatus({ message: "Search link copied. Anyone opening it sees this route, dates, and travellers.", kind: "success" });
+    } catch {
+      window.prompt("Copy this search link:", window.location.href);
+    }
+  };
+
+  // Cheapest fare on neighbouring dates (same trip length). Each date costs one
+  // search per departure airport, so it only runs when asked.
+  const compareNearby = async (range) => {
+    if (!searched || nearbyLoading) return;
+    const offsets = [];
+    for (let offset = -range; offset <= range; offset += 1) if (offset) offsets.push(offset);
+    const dates = offsets
+      .map((offset) => ({ offset, depart: addDays(searched.depart, offset), return: searched.trip === "round" ? addDays(searched.return, offset) : "" }))
+      .filter((entry) => daysFromToday(entry.depart) >= 0);
+    setNearbyLoading(true);
+    const found = [{ offset: 0, depart: searched.depart, return: searched.return, price: flights.length ? Math.min(...flights.map((flight) => flight.price)) : null }];
+    setNearby([...found]);
+    for (const entry of dates) {
+      const params = flightQuery({ ...searched, depart: entry.depart, return: entry.return });
+      params.delete("toName");
+      try {
+        const response = await fetch(`/api/flights/search?${params}`);
+        const payload = await response.json();
+        const prices = response.ok ? (payload.flights || []).map((flight) => flight.price) : [];
+        found.push({ ...entry, price: prices.length ? Math.min(...prices) : null });
+      } catch {
+        found.push({ ...entry, price: null });
+      }
+      setNearby([...found].sort((a, b) => a.offset - b.offset));
+    }
+    setNearbyLoading(false);
+  };
+  const pickNearby = (entry) => {
+    const next = { ...form, ...searched, depart: entry.depart, return: entry.return || searched.return };
+    setForm(next);
+    search(next);
   };
   const selectOutbound = async (flight) => {
     outboundResults.current = results;
@@ -470,8 +620,9 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
         <header className="topbar fs-topbar">
           {viewSwitch}
           {results && flights.length > 0 && <button className="mobile-filter-button" onClick={() => setFiltersOpen(true)} aria-label="Open flight filters"><Icon>tune</Icon></button>}
+          {searched && <button type="button" className="share-button fs-share" onClick={shareSearch} title="Copy a link to this search"><Icon>ios_share</Icon><span>Share search</span></button>}
         </header>
-        <SearchBar form={form} setForm={setForm} onSearch={search} loading={loading} />
+        <SearchBar form={form} setForm={setForm} onSearch={() => search()} loading={loading} />
         <p className={`live-status fs-status ${status.kind}`} role="status" aria-live="polite">{status.message}</p>
 
         {outbound && <div className="fs-outbound">
@@ -490,6 +641,15 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
             </div>
           </div>
           <PriceInsights insights={insights} cheapest={shown[0] && Math.min(...shown.map((flight) => flight.price))} />
+          {mode !== "round-return" && insights?.history?.length > 1 && <PriceHistory history={insights.history} typicalRange={insights.typicalRange} />}
+          {mode !== "round-return" && searched && <NearbyDates
+            nearby={nearby}
+            loading={nearbyLoading}
+            searchesPerDate={searched.from === "ALL" ? 2 : 1}
+            onCompare={compareNearby}
+            onPick={pickNearby}
+            roundTrip={searched.trip === "round"}
+          />}
           {mode !== "oneway" && <p className="fs-hint fs-price-note">Round-trip prices: each fare already includes a return flight, which you choose next.</p>}
           {shown.length ? (
             <div className="fs-list">

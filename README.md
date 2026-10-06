@@ -15,6 +15,9 @@ Filters go further than Google Flights and apply instantly without spending extr
 - Minimum layover (avoid tight connections) and maximum layover, avoiding overnight layovers, and excluding specific connecting airports
 - Hiding flights often delayed 30+ minutes, and lower-emission flights only
 - Sort by best, cheapest, fastest, earliest or latest departure, earliest arrival, or lowest emissions; price insight shows whether fares are low, typical, or high for the route
+- Price history chart for the route (from Google Flights price insights, no extra searches), with the typical price range marked
+- Compare nearby dates (±1 or ±3 days, same trip length) to find the cheapest day; the button shows how many searches it will use, and switching to a compared date is served from cache
+- Shareable flight searches: the address bar carries the route, dates, travellers, cabin, and bags, and a shared link opens straight onto its results
 
 ### Explore map
 

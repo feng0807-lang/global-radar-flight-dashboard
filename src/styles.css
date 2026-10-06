@@ -496,3 +496,46 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
   .view-switch button { padding: 7px 11px; }
   .fs-topbar { flex-wrap: nowrap; }
 }
+
+/* Price history: single series line, typical range as a quiet band */
+.price-history { margin: 0 0 10px; padding: 12px 14px 10px; border: 1px solid var(--line); border-radius: 12px; background: #0b1530; }
+.price-history figcaption { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 8px; }
+.price-history figcaption span { color: #eef4ff; font-size: 10px; font-weight: 700; letter-spacing: .8px; }
+.price-history figcaption small { color: var(--muted); font-size: 11px; }
+.ph-plot { display: grid; grid-template-columns: auto 1fr; gap: 8px; }
+.ph-y { position: relative; width: 62px; color: var(--muted); font-size: 10px; text-align: right; white-space: nowrap; }
+.ph-y span { position: absolute; right: 0; translate: 0 -50%; }
+.ph-area { position: relative; height: 96px; border-bottom: 1px solid var(--line); outline-offset: 4px; cursor: crosshair; }
+.ph-area svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.ph-band { fill: rgba(160, 184, 228, .1); }
+.ph-band-label { position: absolute; right: 4px; translate: 0 2px; color: var(--muted); font-size: 9px; pointer-events: none; }
+.ph-line { fill: none; stroke: var(--teal); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.ph-cross { stroke: rgba(238, 244, 255, .45); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.ph-dot { position: absolute; width: 9px; height: 9px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 0 2px #0b1530; translate: -50% -50%; pointer-events: none; }
+.ph-dot.active { width: 10px; height: 10px; background: #eef4ff; }
+.ph-tooltip { position: absolute; top: -6px; translate: 10px -100%; display: grid; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; background: #0d1832; white-space: nowrap; pointer-events: none; box-shadow: 0 8px 18px rgba(0, 0, 0, .35); }
+.ph-tooltip.flip { translate: calc(-100% - 10px) -100%; }
+.ph-tooltip b { color: #eef4ff; font-size: 12px; }
+.ph-tooltip small { color: var(--muted); font-size: 10px; }
+.ph-x { display: flex; justify-content: space-between; margin: 4px 0 0 0; padding-left: 70px; color: var(--muted); font-size: 10px; }
+
+/* Nearby dates */
+.fs-nearby { margin: 0 0 10px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: #0b1530; }
+.fs-nearby-offer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.fs-nearby-offer > span { flex: 1 1 220px; }
+.fs-nearby b, .fs-nearby small { display: inline; }
+.fs-nearby-offer > span b { display: block; font-size: 13px; }
+.fs-nearby-offer > span small, .fs-nearby-title small { color: var(--muted); font-size: 11px; }
+.fs-nearby-offer button { border: 1px solid rgba(35, 201, 213, .5); border-radius: 999px; background: rgba(35, 201, 213, .08); color: var(--teal); padding: 7px 12px; font-size: 12px; font-weight: 700; }
+.fs-nearby-offer button small { color: var(--muted); font-weight: 600; }
+.fs-nearby-title { display: block; margin-bottom: 8px; font-size: 13px; }
+.fs-nearby-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 6px; }
+.fs-nearby-grid button { display: grid; gap: 2px; justify-items: start; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: #0d1832; color: #eef4ff; text-align: left; }
+.fs-nearby-grid button small { color: var(--muted); font-size: 10px; }
+.fs-nearby-grid button b { font-size: 13px; }
+.fs-nearby-grid button i { font-style: normal; color: #45e68a; font-size: 10px; font-weight: 700; }
+.fs-nearby-grid button.current { border-color: var(--teal); background: rgba(35, 201, 213, .1); cursor: default; }
+.fs-nearby-grid button.cheapest b { color: #45e68a; }
+.fs-nearby-grid button:not(:disabled):hover { border-color: var(--teal); }
+.fs-nearby-grid button:disabled:not(.current) { opacity: .5; cursor: default; }
+.fs-share { margin-left: auto; }
