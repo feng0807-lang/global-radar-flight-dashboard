@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { readFile, stat } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { extname, join, normalize, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { allowedHostsFor, isAllowedHost, isCrossSiteRequest } from "./lib/requestGuard.mjs";
@@ -557,25 +557,29 @@ export const server = createServer(async (request, response) => {
     const requested = url.pathname === "/" ? "/index.html" : url.pathname;
     const path = normalize(join(root, requested));
     if (!path.startsWith(root + sep)) return sendJson(response, 403, { error: "Forbidden" });
-    await stat(path);
+    const body = await readFile(path);
     // Vite fingerprints its bundles (/assets/index-*), so those can be cached for good;
     // other static assets (the map image) are cached for a day.
     const cacheControl = requested.startsWith("/assets/index-")
       ? "public, max-age=31536000, immutable"
       : requested.startsWith("/assets/") ? "public, max-age=86400" : "no-store";
     response.writeHead(200, { ...SECURITY_HEADERS, "Content-Type": mime[extname(path)] || "application/octet-stream", "Cache-Control": cacheControl });
-    response.end(await readFile(path));
+    response.end(body);
   } catch (error) {
     if (request.url?.startsWith("/api/")) {
       console.error("API request failed:", error);
       return sendJson(response, 500, { error: "The flight API server hit an unexpected error. Please try again." });
     }
+    // Read before writing headers: if the build is missing, answer with a clear error
+    // instead of a half-sent 200 that never finishes.
+    let indexHtml;
     try {
-      response.writeHead(200, { ...SECURITY_HEADERS, "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
-      response.end(await readFile(join(root, "index.html")));
+      indexHtml = await readFile(join(root, "index.html"));
     } catch {
-      sendJson(response, 404, { error: "Not found" });
+      return sendJson(response, 503, { error: "The dashboard has not been built yet. Run `npm run build`, then restart the server." });
     }
+    response.writeHead(200, { ...SECURITY_HEADERS, "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+    response.end(indexHtml);
   }
 });
 
