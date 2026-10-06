@@ -13,6 +13,8 @@ A modern flight-discovery dashboard for finding affordable worldwide trips from 
 - Airline, stops, country, weather, sorting, and saved-deal controls
 - Zoomable worldwide radar map with animated flight-path arcs; hovering a pin or fare card highlights its route
 - Budget insights: destinations in reach, median fare, direct-flight count, and cheapest pick
+- Fare spread chart: a histogram of fares in MYR 500 bands that shows what a bigger budget would unlock; pick a bar to set the maximum fare
+- Export the current results (or saved deals) as a spreadsheet-ready CSV
 - Saved deals and filter preferences persist in the browser, including saved live fares
 - Price tracking: saved live fares remember their price, and later live searches show how much each has gone up or down
 - Pins are placed with a projection calibrated to the map artwork (Patterson cylindrical), so cities land on the right spot

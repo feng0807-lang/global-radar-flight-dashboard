@@ -277,6 +277,86 @@ function FilterPanel({ minPrice, setMinPrice, maxPrice, setMaxPrice, stopFilter,
   );
 }
 
+const SPREAD_STEP = 500;
+const SPREAD_TOP = 5000;
+
+// Histogram of fares in MYR 500 bands (the last band is 5,000+). Bands inside the
+// fare range are teal; picking a band sets the maximum fare to its upper edge.
+function FareSpread({ prices, minPrice, maxPrice, onPick }) {
+  const [active, setActive] = useState(null);
+  const bands = Array.from({ length: SPREAD_TOP / SPREAD_STEP + 1 }, (_, index) => {
+    const start = index * SPREAD_STEP;
+    const last = start >= SPREAD_TOP;
+    const end = last ? Number.POSITIVE_INFINITY : start + SPREAD_STEP - 1;
+    return {
+      index,
+      start,
+      last,
+      label: last ? `MYR ${SPREAD_TOP.toLocaleString()}+` : `MYR ${start.toLocaleString()}–${end.toLocaleString()}`,
+      count: prices.filter((price) => price >= start && price <= end).length,
+      inRange: start <= maxPrice && end >= minPrice,
+      pick: last ? SPREAD_TOP : start + SPREAD_STEP,
+    };
+  });
+  const tallest = Math.max(1, ...bands.map((band) => band.count));
+  const shown = active === null ? null : bands[active];
+  return (
+    <section className="fare-spread" aria-label="Fare spread">
+      <div className="fare-spread-head">
+        <span>FARE SPREAD</span>
+        <small>{prices.length} {prices.length === 1 ? "destination" : "destinations"} by return fare · pick a bar to set your maximum fare</small>
+      </div>
+      <div className="fare-spread-plot" onMouseLeave={() => setActive(null)}>
+        {bands.map((band) => (
+          <button
+            key={band.index}
+            type="button"
+            className={`spread-slot ${band.inRange ? "in" : "out"} ${active === band.index ? "active" : ""}`}
+            onMouseEnter={() => setActive(band.index)}
+            onFocus={() => setActive(band.index)}
+            onBlur={() => setActive(null)}
+            onClick={() => onPick(band.pick)}
+            aria-label={`${band.label}: ${band.count} ${band.count === 1 ? "destination" : "destinations"}, ${band.inRange ? "within" : "outside"} your fare range. Set maximum fare to MYR ${band.pick.toLocaleString()}.`}
+          >
+            {band.count > 0 && <i className="spread-bar" style={{ height: `${Math.max(8, (band.count / tallest) * 100)}%` }} />}
+          </button>
+        ))}
+        {shown && <div className={`spread-tooltip ${shown.index <= 1 ? "edge-start" : shown.index >= bands.length - 2 ? "edge-end" : ""}`} style={{ "--slot": shown.index }} aria-hidden="true">
+          <b>{shown.label}</b>
+          <span>{shown.count} {shown.count === 1 ? "destination" : "destinations"}</span>
+          <small>{shown.inRange ? "Within your fare range" : "Outside your fare range"}</small>
+        </div>}
+      </div>
+      <div className="fare-spread-axis" aria-hidden="true">
+        {bands.map((band) => <span key={band.index}>{band.index % 2 === 0 ? (band.last ? "5k+" : band.start === 0 ? "0" : `${band.start / 1000}k`) : ""}</span>)}
+      </div>
+    </section>
+  );
+}
+
+// Spreadsheet-safe CSV cell: quote everything and neutralise leading formula characters.
+function csvCell(value) {
+  const text = String(value ?? "");
+  const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
+  return `"${safe.replace(/"/g, '""')}"`;
+}
+
+function dealsToCsv(deals) {
+  const header = ["Destination", "Country", "From", "Fare (MYR)", "Dates", "Trip days", "Stops", "Airline", "Booking link"];
+  const rows = deals.map((deal) => [
+    deal.city,
+    deal.country,
+    (deal.origins || [deal.origin]).join(" + "),
+    deal.price,
+    deal.date,
+    deal.days,
+    deal.stops,
+    deal.airline || "",
+    deal.link || deal.originOptions?.find((option) => option.link)?.link || "",
+  ]);
+  return [header, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
+}
+
 function PriceChange({ change, className = "" }) {
   if (!change) return null;
   const down = change < 0;
@@ -490,11 +570,9 @@ export function App() {
     }
   }, [shareParams]);
 
-  const filtered = useMemo(() => {
-    if (savedOnly) {
-      return savedDeals.map((deal) => ({ ...deal, price: deal.latestPrice ?? deal.price, date: deal.latestDate ?? deal.date })).sort((a, b) => sort === "price" ? a.price - b.price : sort === "days" ? a.days - b.days : a.city.localeCompare(b.city));
-    }
-    let result = deals.filter((deal) => {
+  // Deals matching every filter except the fare range; the fare-spread chart uses
+  // these to show what a different budget would unlock.
+  const nonPriceMatches = useMemo(() => deals.filter((deal) => {
       const originMatch = origin === "ALL" || (deal.origins || [deal.origin]).includes(origin);
       const stopMatch = stopFilter === "any" || deal.stops < Number(stopFilter);
       const themeMatch = themes.length === 0 || themes.includes(deal.theme);
@@ -503,10 +581,16 @@ export function App() {
       const queryMatch = searchTerms.length === 0 || searchTerms.every((term) => dealText.includes(term));
       const countryMatch = selectedCountry === "ALL" || deal.country === selectedCountry;
       const weatherMatch = !weatherFilter || (deal.weather?.available && deal.weather.dryPercent >= minDryPercent);
-      return originMatch && deal.price >= minPrice && deal.price <= maxPrice && stopMatch && themeMatch && queryMatch && countryMatch && weatherMatch;
-    });
-    return [...result].sort((a, b) => sort === "price" ? a.price - b.price : sort === "days" ? a.days - b.days : a.city.localeCompare(b.city));
-  }, [deals, origin, minPrice, maxPrice, stopFilter, themes, query, selectedCountry, weatherFilter, minDryPercent, savedOnly, savedDeals, sort]);
+      return originMatch && stopMatch && themeMatch && queryMatch && countryMatch && weatherMatch;
+  }), [deals, origin, stopFilter, themes, query, selectedCountry, weatherFilter, minDryPercent]);
+
+  const filtered = useMemo(() => {
+    const bySort = (a, b) => sort === "price" ? a.price - b.price : sort === "days" ? a.days - b.days : a.city.localeCompare(b.city);
+    if (savedOnly) {
+      return savedDeals.map((deal) => ({ ...deal, price: deal.latestPrice ?? deal.price, date: deal.latestDate ?? deal.date })).sort(bySort);
+    }
+    return nonPriceMatches.filter((deal) => deal.price >= minPrice && deal.price <= maxPrice).sort(bySort);
+  }, [nonPriceMatches, minPrice, maxPrice, savedOnly, savedDeals, sort]);
   const countries = useMemo(() => [...new Set(deals.map((deal) => deal.country).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [deals]);
   const budgetSummary = useMemo(() => {
     if (selectedDestination || savedOnly || filtered.length === 0) return null;
@@ -531,6 +615,24 @@ export function App() {
       updateLiveStatus("Search link copied. Anyone opening it sees these filters and dates.", "success");
     } catch {
       window.prompt("Copy this search link:", link);
+    }
+  };
+  const exportCsv = () => {
+    if (!filtered.length) return;
+    try {
+      // BOM so Excel opens "MYR 1,234 – …" text as UTF-8.
+      const blob = new Blob(["\ufeff", dealsToCsv(filtered)], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `global-radar-${savedOnly ? "saved" : dataMode}-fares-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      updateLiveStatus(`Exported ${filtered.length} ${filtered.length === 1 ? "fare" : "fares"} to CSV.`, "success");
+    } catch {
+      updateLiveStatus("Could not export these fares. Try again.", "error");
     }
   };
   const setBudget = (value) => {
@@ -916,6 +1018,7 @@ export function App() {
               ? <><span>YOUR</span><h2>SAVED DEALS</h2></>
               : <><span>BEST DEALS FROM</span><h2>{origin === "PEN" ? "PENANG" : origin === "KUL" ? "KUALA LUMPUR" : "PENANG & KUALA LUMPUR"}</h2></>}</div>
             <p className={`live-status ${liveStatusKind}`} role="status" aria-live="polite">{liveStatus}</p>
+            <button type="button" className="export-button" onClick={exportCsv} disabled={!filtered.length}><Icon>download</Icon><span>Export CSV</span></button>
             <label>Sort by
               <select value={sort} onChange={(e) => setSort(e.target.value)}>
                 <option value="price">Price: low to high</option>
@@ -924,6 +1027,7 @@ export function App() {
               </select>
             </label>
           </div>
+          {!savedOnly && !selectedDestination && nonPriceMatches.length >= 2 && <FareSpread prices={nonPriceMatches.map((deal) => deal.price)} minPrice={minPrice} maxPrice={maxPrice} onPick={setBudget} />}
           {budgetSummary && <div className="budget-banner">
             <div className="budget-banner-main">
               <span>BUDGET REACH</span>
