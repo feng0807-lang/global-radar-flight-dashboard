@@ -14,6 +14,7 @@ A modern flight-discovery dashboard for finding affordable worldwide trips from 
 - Zoomable worldwide radar map with animated flight-path arcs; hovering a pin or fare card highlights its route
 - Budget insights: destinations in reach, median fare, direct-flight count, and cheapest pick
 - Saved deals and filter preferences persist in the browser, including saved live fares
+- Price tracking: saved live fares remember their price, and later live searches show how much each has gone up or down
 - Pins are placed with a projection calibrated to the map artwork (Patterson cylindrical), so cities land on the right spot
 - Map labels declutter automatically: cheaper fares keep their labels, others flip sides or collapse to a dot that expands on hover; zooming in reveals more
 - Shareable searches: the address bar tracks airport, fare range, stops, dates, and destination, and **Share search** copies the link
@@ -46,7 +47,7 @@ A modern flight-discovery dashboard for finding affordable worldwide trips from 
 
 4. Open `http://127.0.0.1:4174`.
 
-Run the unit tests with `npm test`. They cover the map projection calibration (`src/mapProjection.js`) and the fare logic the API server uses to merge, filter, and rank fares and connecting routes (`lib/fares.mjs`); no API key or network access is needed.
+Run the unit tests with `npm test`. GitHub Actions runs the tests, the production build, and a server smoke test on every push and pull request (`.github/workflows/ci.yml`). They cover the map projection calibration (`src/mapProjection.js`) and the fare logic the API server uses to merge, filter, and rank fares and connecting routes (`lib/fares.mjs`); no API key or network access is needed.
 
 See [API_SETUP.md](API_SETUP.md) for additional setup and troubleshooting details.
 

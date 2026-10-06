@@ -182,6 +182,10 @@ function boxesOverlap(a, b) {
   return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 }
 
+function isLiveDeal(deal) {
+  return deal?.theme === "Live";
+}
+
 function searchableText(value) {
   return String(value || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
@@ -273,7 +277,18 @@ function FilterPanel({ minPrice, setMinPrice, maxPrice, setMaxPrice, stopFilter,
   );
 }
 
-function DealCard({ deal, saved, onSave, onOpen, highlighted, onHover }) {
+function PriceChange({ change, className = "" }) {
+  if (!change) return null;
+  const down = change < 0;
+  return (
+    <span className={`price-change ${down ? "down" : "up"} ${className}`} title="Change since you saved this deal">
+      <Icon>{down ? "trending_down" : "trending_up"}</Icon>
+      {down ? "Down" : "Up"} MYR {Math.abs(change).toLocaleString()} since saved
+    </span>
+  );
+}
+
+function DealCard({ deal, saved, onSave, onOpen, highlighted, onHover, priceChange }) {
   const origins = deal.origins || [deal.origin];
   const originClass = origins.length > 1 ? "both" : origins[0]?.toLowerCase();
   return (
@@ -293,6 +308,7 @@ function DealCard({ deal, saved, onSave, onOpen, highlighted, onHover }) {
         </div>
         <p className="airline-line"><Icon>airlines</Icon>{deal.airline ? `${deal.airline}${deal.airlineCode ? ` · ${deal.airlineCode}` : ""}` : "Airline shown on live fares"}</p>
         <p className={`weather-line ${deal.weather?.available ? "available" : ""}`}><Icon>{deal.weather?.available ? "partly_cloudy_day" : "cloud_off"}</Icon>{deal.weather?.available ? `${deal.weather.dryPercent}% dry forecast · ${deal.weather.dryDays}/${deal.weather.totalDays} days` : "Weather forecast unavailable"}</p>
+        <PriceChange change={priceChange} />
         <div className={`deal-price ${deal.accent}`}><small>from</small><strong>MYR {deal.price.toLocaleString()}</strong></div>
         <div className="deal-meta"><span><Icon>calendar_today</Icon>{deal.date}</span><span>{deal.days} days</span></div>
       </div>
@@ -316,6 +332,16 @@ export function App() {
   // Saved deals are stored whole so live fares stay saved after a refresh or new search.
   const [savedDeals, setSavedDeals] = usePersistentState("savedDeals", DEALS.filter((deal) => [1, 4, 8].includes(deal.id)));
   const saved = useMemo(() => savedDeals.map((deal) => deal.id), [savedDeals]);
+  // Saved deals remember the fare at save time; later live searches for the same
+  // city record the latest fare so the card can show how the price has moved.
+  // Only live fares are compared: demo prices are illustrative and would show fake moves.
+  const savedByCity = useMemo(() => new Map(savedDeals.filter(isLiveDeal).map((deal) => [searchableText(deal.city), deal])), [savedDeals]);
+  const priceChangeFor = (deal) => {
+    if (!isLiveDeal(deal)) return 0;
+    const entry = savedDeals.find((item) => item.id === deal.id && isLiveDeal(item)) || savedByCity.get(searchableText(deal.city));
+    if (!entry) return 0;
+    return deal.price - (entry.savedPrice ?? entry.price);
+  };
   const [hoveredId, setHoveredId] = useState(null);
   const searchInputRef = useRef(null);
   const [savedOnly, setSavedOnly] = useState(false);
@@ -466,7 +492,7 @@ export function App() {
 
   const filtered = useMemo(() => {
     if (savedOnly) {
-      return [...savedDeals].sort((a, b) => sort === "price" ? a.price - b.price : sort === "days" ? a.days - b.days : a.city.localeCompare(b.city));
+      return savedDeals.map((deal) => ({ ...deal, price: deal.latestPrice ?? deal.price, date: deal.latestDate ?? deal.date })).sort((a, b) => sort === "price" ? a.price - b.price : sort === "days" ? a.days - b.days : a.city.localeCompare(b.city));
     }
     let result = deals.filter((deal) => {
       const originMatch = origin === "ALL" || (deal.origins || [deal.origin]).includes(origin);
@@ -495,7 +521,9 @@ export function App() {
   }, [filtered, selectedDestination, savedOnly, maxPrice]);
 
   const toggleTheme = (theme) => setThemes((current) => current.includes(theme) ? current.filter((item) => item !== theme) : [...current, theme]);
-  const toggleSave = (deal) => setSavedDeals((current) => current.some((item) => item.id === deal.id) ? current.filter((item) => item.id !== deal.id) : [...current, deal]);
+  const toggleSave = (deal) => setSavedDeals((current) => current.some((item) => item.id === deal.id)
+    ? current.filter((item) => item.id !== deal.id)
+    : [...current, { ...deal, savedPrice: deal.price, savedAt: new Date().toISOString(), latestPrice: undefined, latestDate: undefined }]);
   const shareSearch = async () => {
     const link = `${window.location.origin}${window.location.pathname}${shareParams ? `?${shareParams}` : ""}`;
     try {
@@ -590,11 +618,25 @@ export function App() {
           : "No live fares matched these filters. Try widening the fare range or travel dates."));
       }
       setDeals(payload.deals);
+      const liveByCity = new Map(payload.deals.map((deal) => [searchableText(deal.city), deal]));
+      const priceMoves = savedDeals
+        .filter(isLiveDeal)
+        .map((entry) => ({ entry, match: liveByCity.get(searchableText(entry.city)) }))
+        .filter(({ match }) => match)
+        .map(({ entry, match }) => match.price - (entry.savedPrice ?? entry.price));
+      if (priceMoves.length) {
+        const checkedAt = new Date().toISOString();
+        setSavedDeals((current) => current.map((entry) => {
+          const match = isLiveDeal(entry) && liveByCity.get(searchableText(entry.city));
+          return match ? { ...entry, savedPrice: entry.savedPrice ?? entry.price, latestPrice: match.price, latestDate: match.date, priceCheckedAt: checkedAt } : entry;
+        }));
+      }
+      const drops = priceMoves.filter((change) => change < 0).length;
       if (selectedCountry !== "ALL" && !payload.deals.some((deal) => deal.country === selectedCountry)) setSelectedCountry("ALL");
       setDataMode("live");
       setApiHealth("online");
       const updatedAt = payload.retrievedAt ? new Date(payload.retrievedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
-      updateLiveStatus(`${payload.deals.length} live ${dest ? `fare${payload.deals.length === 1 ? "" : "s"} to ${dest.name}` : "destinations"} loaded${payload.fallbackUsed ? ` · scanned ${payload.fallbackDestinationsScanned} airports` : ""}${payload.tripDayRangeApproximate ? " · closest available exact dates" : ""}${updatedAt ? ` · updated ${updatedAt}` : ""}${payload.emptyOrigins?.length ? ` · no fares from ${payload.emptyOrigins.join(" or ")}` : ""}${payload.warnings?.length ? " · one airport unavailable" : ""}`, "success");
+      updateLiveStatus(`${payload.deals.length} live ${dest ? `fare${payload.deals.length === 1 ? "" : "s"} to ${dest.name}` : "destinations"} loaded${payload.fallbackUsed ? ` · scanned ${payload.fallbackDestinationsScanned} airports` : ""}${payload.tripDayRangeApproximate ? " · closest available exact dates" : ""}${updatedAt ? ` · updated ${updatedAt}` : ""}${payload.emptyOrigins?.length ? ` · no fares from ${payload.emptyOrigins.join(" or ")}` : ""}${payload.warnings?.length ? " · one airport unavailable" : ""}${drops ? ` · ${drops} saved ${drops === 1 ? "deal is" : "deals are"} cheaper now` : ""}`, "success");
     } catch (error) {
       const isOffline = error instanceof TypeError || /failed to fetch|networkerror/i.test(error.message);
       if (isOffline) setApiHealth("offline");
@@ -898,7 +940,7 @@ export function App() {
             </button>
           </div>}
           <div className="deal-rail">
-            {filtered.length ? filtered.map((deal) => <DealCard key={deal.id} deal={deal} saved={saved.includes(deal.id)} onSave={toggleSave} onOpen={setSelected} highlighted={deal.id === focusId} onHover={setHoveredId} />) : (
+            {filtered.length ? filtered.map((deal) => <DealCard key={deal.id} deal={deal} saved={saved.includes(deal.id)} onSave={toggleSave} onOpen={setSelected} highlighted={deal.id === focusId} onHover={setHoveredId} priceChange={priceChangeFor(deal)} />) : (
               <div className="empty-state">
                 <Icon>{savedOnly ? "bookmark" : selectedDestination ? "travel_explore" : weatherFilter ? "rainy" : "flight_takeoff"}</Icon>
                 <h3>{savedOnly ? "No saved deals yet" : selectedDestination && dataMode === "demo" ? `Search fares to ${selectedDestination.name}` : "No fares match those filters"}</h3>
@@ -923,6 +965,7 @@ export function App() {
             <span className="eyebrow">DISCOVERED DEAL</span>
             <h2>{selected.city}</h2><p className="drawer-country">{selected.country}</p>
             <div className="drawer-price"><small>Cheapest return fare from {selected.origin === "BOTH" ? "Penang or Kuala Lumpur" : selected.origin}</small><strong>MYR {selected.price.toLocaleString()}</strong></div>
+            <PriceChange change={priceChangeFor(selected)} className="drawer-price-change" />
             {selected.originOptions?.length > 0 && <div className="route-options">
               {selected.originOptions.map((option) => <a key={option.origin} className={`route-option origin-${option.origin.toLowerCase()}`} href={option.link || "#"} target="_blank" rel="noreferrer">
                 <span><b>{option.origin}</b><small>{option.airline}{option.airlineCode ? ` · ${option.airlineCode}` : ""}</small></span><strong>MYR {option.price.toLocaleString()}</strong>

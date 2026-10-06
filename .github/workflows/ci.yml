@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - name: Smoke-test the API server in demo mode
+        run: |
+          npm start &
+          for attempt in $(seq 1 20); do
+            curl -sf http://127.0.0.1:4174/api/status && break
+            sleep 0.5
+          done
+          curl -sf http://127.0.0.1:4174/api/status | grep -q '"ok":true'
+          curl -sf http://127.0.0.1:4174/ | grep -q '<div id="root">'

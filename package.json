@@ -16,5 +16,8 @@
     "react": "19.2.0",
     "react-dom": "19.2.0"
   },
-  "devDependencies": {}
+  "devDependencies": {},
+  "engines": {
+    "node": ">=20.12"
+  }
 }
