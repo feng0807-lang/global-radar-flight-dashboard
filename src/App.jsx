@@ -1030,7 +1030,11 @@ export function App() {
 
         <section ref={mapRef} className={`map-panel ${mapDragging ? "dragging" : ""}`} onWheel={onMapWheel} onPointerDown={onMapPointerDown} onPointerMove={onMapPointerMove} onPointerUp={onMapPointerUp} onPointerCancel={onMapPointerUp}>
           <div className="map-scene" style={{ transform: `translate(${mapPan.x}px, ${mapPan.y}px) scale(${mapZoom})` }}>
-            <img className="world-map" src="./assets/world-map-night.png" alt="Night-time world map" draggable="false" />
+            <picture>
+              {/* ~100 KB WebP (vs a 2.1 MB PNG kept as the fallback); it is the largest paint on the page. */}
+              <source srcSet="./assets/world-map-night.webp" type="image/webp" />
+              <img className="world-map" src="./assets/world-map-night.png" alt="Night-time world map" width="1536" height="1024" fetchPriority="high" draggable="false" />
+            </picture>
             <div className="radar-sweep" style={{ left: (penangPoint.x + klPoint.x) / 2, top: (penangPoint.y + klPoint.y) / 2 }} aria-hidden="true"><i /><i /><i /></div>
             <svg className={`flight-arcs ${focusId !== null ? "has-focus" : ""}`} width={mapSize.width} height={mapSize.height} aria-hidden="true">
               {flightArcs.map((arc) => <path key={arc.key} d={arc.d} className={`arc origin-${arc.origin} ${arc.dealId === focusId ? "focused" : ""}`} />)}

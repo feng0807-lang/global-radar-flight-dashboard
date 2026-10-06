@@ -23,7 +23,8 @@ A modern flight-discovery dashboard for finding affordable worldwide trips from 
 - Every deal links straight to a matching Google Flights search
 - Keyboard and screen-reader friendly: deals open with Tab + Enter, panels behave as modal dialogs, and search status is announced
 - Keyboard shortcuts: `/` focuses destination search, `Esc` closes panels
-- Server-side 10-minute cache of SerpApi responses so repeated searches do not spend extra quota (hit/miss counts at `/api/status`)
+- Server-side 10-minute cache of SerpApi responses, and identical in-flight requests are shared, so repeated searches do not spend extra quota (counts at `/api/status`)
+- Lightweight first load: the map ships as a ~100 KB WebP (PNG fallback) and the icon font is subset to the icons in use (~15 KB instead of ~1.4 MB)
 
 ## Run Locally
 

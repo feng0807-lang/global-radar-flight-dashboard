@@ -71,7 +71,10 @@ const ROUTE_HUBS = [
 const SERPAPI_CACHE_TTL_MS = 10 * 60 * 1000;
 const SERPAPI_CACHE_MAX_ENTRIES = 300;
 const serpApiCache = new Map();
-const cacheStats = { hits: 0, misses: 0 };
+const cacheStats = { hits: 0, misses: 0, shared: 0 };
+// Identical requests already on their way to SerpApi (a double-click, or both origins
+// scanning the same hub leg) wait for that one response instead of sending another.
+const serpApiInFlight = new Map();
 
 async function fetchSerpApi(params, timeoutMs) {
   const cacheParams = new URLSearchParams(params);
@@ -83,7 +86,18 @@ async function fetchSerpApi(params, timeoutMs) {
     cacheStats.hits += 1;
     return { ok: true, status: 200, payload: cached.payload, cached: true };
   }
+  const pending = serpApiInFlight.get(cacheKey);
+  if (pending) {
+    cacheStats.shared += 1;
+    return pending;
+  }
   cacheStats.misses += 1;
+  const request = requestSerpApi(params, timeoutMs, cacheKey).finally(() => serpApiInFlight.delete(cacheKey));
+  serpApiInFlight.set(cacheKey, request);
+  return request;
+}
+
+async function requestSerpApi(params, timeoutMs, cacheKey) {
   const apiResponse = await fetch(`https://serpapi.com/search.json?${params}`, { signal: AbortSignal.timeout(timeoutMs) });
   const responseText = await apiResponse.text();
   let payload = null;
@@ -524,7 +538,7 @@ const server = createServer(async (request, response) => {
         keyConfigured: Boolean(apiKey),
         provider: "SerpApi Google Travel Explore",
         serverTime: new Date().toISOString(),
-        cache: { entries: serpApiCache.size, hits: cacheStats.hits, misses: cacheStats.misses, ttlMinutes: SERPAPI_CACHE_TTL_MS / 60000 },
+        cache: { entries: serpApiCache.size, hits: cacheStats.hits, misses: cacheStats.misses, sharedInFlight: cacheStats.shared, ttlMinutes: SERPAPI_CACHE_TTL_MS / 60000 },
       });
     }
     if (url.pathname === "/api/flights/locations") return await searchLocations(url, response);
@@ -535,8 +549,11 @@ const server = createServer(async (request, response) => {
     const path = normalize(join(root, requested));
     if (!path.startsWith(root)) return sendJson(response, 403, { error: "Forbidden" });
     await stat(path);
-    // Vite fingerprints everything under /assets/, so those files can be cached for good.
-    const cacheControl = requested.startsWith("/assets/index-") ? "public, max-age=31536000, immutable" : "no-store";
+    // Vite fingerprints its bundles (/assets/index-*), so those can be cached for good;
+    // other static assets (the map image) are cached for a day.
+    const cacheControl = requested.startsWith("/assets/index-")
+      ? "public, max-age=31536000, immutable"
+      : requested.startsWith("/assets/") ? "public, max-age=86400" : "no-store";
     response.writeHead(200, { ...SECURITY_HEADERS, "Content-Type": mime[extname(path)] || "application/octet-stream", "Cache-Control": cacheControl });
     response.end(await readFile(path));
   } catch (error) {
