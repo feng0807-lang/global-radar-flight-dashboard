@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { extname, join, normalize, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { allowedHostsFor, isAllowedHost, isCrossSiteRequest } from "./lib/requestGuard.mjs";
+import { CABINS, normalizeFlightResults, parseFlightSearch, serpApiFlightParams } from "./lib/flightSearch.mjs";
 import { assembleRoutes, collapseDeals, daysBetween, durationGroupsFor, googleFlightsUrl, mapDestination, mapSpecificFlight, parsePrice } from "./lib/fares.mjs";
 
 const root = fileURLToPath(new URL("./dist", import.meta.url));
@@ -384,6 +385,56 @@ async function routeFinder(requestUrl, response) {
   }
 }
 
+// Only pass through booking links that really point at Google Flights.
+function safeGoogleFlightsUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && /(^|\.)google\.com$/.test(url.hostname) ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
+// Google Flights-style search: every flight option for the route and dates, from
+// one or both home airports. Filtering and sorting happen in the browser.
+async function searchFlights(requestUrl, response) {
+  if (!apiKey) {
+    return sendJson(response, 503, { error: "Live API is ready, but SERPAPI_KEY has not been configured." });
+  }
+  const { query, error } = parseFlightSearch(requestUrl.searchParams);
+  if (error) return sendJson(response, 400, { error });
+
+  const results = await Promise.allSettled(query.origins.map(async (origin) => {
+    const params = serpApiFlightParams(query, origin);
+    params.set("api_key", apiKey);
+    const { ok, payload } = await fetchSerpApi(params, 30000);
+    if (!payload) throw new Error(`Flight search returned an invalid response for ${origin}.`);
+    // No flights for a route is an empty result, not a failure.
+    if (payload.error && /no results|hasn't returned any results/i.test(payload.error)) return { origin, flights: [], priceInsights: null, googleFlightsUrl: "" };
+    if (!ok || payload.error) throw new Error(payload.error || `Flight search failed for ${origin}.`);
+    return { origin, ...normalizeFlightResults(payload, origin) };
+  }));
+  const fulfilled = results.filter((result) => result.status === "fulfilled").map((result) => result.value);
+  if (!fulfilled.length) {
+    return sendJson(response, 502, { error: results[0]?.reason?.message || "Flight search failed. Please try again." });
+  }
+  const flights = fulfilled.flatMap((result) => result.flights);
+  return sendJson(response, 200, {
+    flights,
+    byOrigin: Object.fromEntries(fulfilled.map((result) => [result.origin, {
+      count: result.flights.length,
+      priceInsights: result.priceInsights,
+      googleFlightsUrl: safeGoogleFlightsUrl(result.googleFlightsUrl),
+    }])),
+    query: { ...query, departureToken: query.departureToken ? "selected" : "", cabinName: CABINS[query.cabin] },
+    leg: query.departureToken ? "return" : "outbound",
+    warnings: results.filter((result) => result.status === "rejected").map((result) => result.reason?.message),
+    message: flights.length ? null : `No flights found from ${query.origins.join(" or ")} to ${query.to} on these dates. Try nearby dates or another cabin.`,
+    retrievedAt: new Date().toISOString(),
+    source: "SerpApi Google Flights",
+  });
+}
+
 async function searchLocations(requestUrl, response) {
   if (!apiKey) {
     return sendJson(response, 503, { error: "Live API is ready, but SERPAPI_KEY has not been configured." });
@@ -553,6 +604,7 @@ export const server = createServer(async (request, response) => {
     if (url.pathname === "/api/flights/locations") return await searchLocations(url, response);
     if (url.pathname === "/api/flights/explore") return await exploreFlights(url, response);
     if (url.pathname === "/api/flights/route") return await routeFinder(url, response);
+    if (url.pathname === "/api/flights/search") return await searchFlights(url, response);
 
     const requested = url.pathname === "/" ? "/index.html" : url.pathname;
     const path = normalize(join(root, requested));

@@ -13,9 +13,12 @@ import { Dialog } from "./components/Dialog.jsx";
 import { FilterPanel } from "./components/FilterPanel.jsx";
 import { FareSpread } from "./components/FareSpread.jsx";
 import { DealCard, PriceChange } from "./components/DealCard.jsx";
+import { FlightSearchView } from "./components/FlightSearch.jsx";
 
 export function App() {
   const [deals, setDeals] = useState(DEALS);
+  // "explore" = destination map; "flights" = Google Flights-style route search.
+  const [view, setView] = usePersistentState("view", "explore", SHARED_SEARCH.view, (value) => value === "explore" || value === "flights");
   const [origin, setOrigin] = usePersistentState("origin", "ALL", SHARED_SEARCH.origin);
   // Clamp a shared minimum against the maximum this visit will actually use, so a
   // min-only link never produces min >= max (and the clamp is not saved either).
@@ -176,6 +179,7 @@ export function App() {
 
   const shareParams = useMemo(() => {
     const params = new URLSearchParams();
+    if (view === "flights") params.set("view", "flights");
     if (origin !== "ALL") params.set("from", origin);
     if (minPrice !== 0) params.set("min", String(minPrice));
     if (maxPrice !== 3000) params.set("max", String(maxPrice));
@@ -196,7 +200,7 @@ export function App() {
       if (selectedDestination.description) params.set("toDesc", selectedDestination.description);
     }
     return params.toString();
-  }, [origin, minPrice, maxPrice, stopFilter, dateMode, outboundDate, returnDate, travelMonth, minTripDays, maxTripDays, selectedDestination]);
+  }, [view, origin, minPrice, maxPrice, stopFilter, dateMode, outboundDate, returnDate, travelMonth, minTripDays, maxTripDays, selectedDestination]);
 
   // Keep the address bar in step with the search so it can be bookmarked or shared.
   useEffect(() => {
@@ -576,14 +580,23 @@ export function App() {
     // homePoints/projectLocation are recreated each render but only depend on mapSize.
   }) : [], [mappedDeals, mapSize]);
 
+  const viewSwitch = (
+    <div className="view-switch" role="group" aria-label="View">
+      <button type="button" className={view === "explore" ? "active" : ""} aria-pressed={view === "explore"} onClick={() => setView("explore")}><Icon>travel_explore</Icon>Explore map</button>
+      <button type="button" className={view === "flights" ? "active" : ""} aria-pressed={view === "flights"} onClick={() => setView("flights")}><Icon>search</Icon>Search flights</button>
+    </div>
+  );
+
   return (
     <main className="app-shell">
+      {view === "flights" ? <FlightSearchView viewSwitch={viewSwitch} defaultOrigin={origin} /> : <>
       <FilterPanel {...filterProps} />
       {filtersOpen && <Dialog overlayClassName="mobile-overlay" label="Filters" onClose={() => setFiltersOpen(false)}>
         <FilterPanel mobile close={() => setFiltersOpen(false)} {...filterProps} />
       </Dialog>}
 
       <section className="workspace">
+        <div className="view-strip">{viewSwitch}</div>
         <header className="topbar">
           <button className="mobile-filter-button" onClick={() => setFiltersOpen(true)} aria-label="Open filters"><Icon>tune</Icon></button>
           <div className="origin-switch" role="group" aria-label="Departure airport">
@@ -728,6 +741,7 @@ export function App() {
           </div>
         </section>
       </section>
+      </>}
 
       {selected && <Dialog className="deal-drawer" label={`${selected.city} deal`} onClose={() => setSelected(null)}>
           <button className="drawer-close" onClick={() => setSelected(null)} aria-label="Close deal"><Icon>close</Icon></button>

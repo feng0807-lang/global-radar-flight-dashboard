@@ -27,6 +27,7 @@ export const SHARED_SEARCH = {
   travelMonth: sharedValue("month", (value) => /^\d{4}-\d{2}$/.test(value)),
   minTripDays: sharedValue("minDays", isTripDays),
   maxTripDays: sharedValue("maxDays", isTripDays),
+  view: sharedValue("view", (value) => value === "flights"),
   destination: SHARED.get("to") && /^[A-Z]{3}$/.test(SHARED.get("to")) && SHARED.get("toName")
     ? { id: SHARED.get("to"), type: "airport", name: SHARED.get("toName").slice(0, 120), description: (SHARED.get("toDesc") || "").slice(0, 120) }
     : null,

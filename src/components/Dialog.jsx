@@ -14,6 +14,10 @@ export function Dialog({ overlayClassName = "drawer-overlay", className, label, 
     };
   }, []);
   const trapTab = (event) => {
+    if (event.key === "Escape") {
+      onClose();
+      return;
+    }
     if (event.key !== "Tab") return;
     const focusable = [...panelRef.current.querySelectorAll(FOCUSABLE)].filter((element) => element.offsetParent !== null);
     if (!focusable.length) return;

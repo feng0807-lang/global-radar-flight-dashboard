@@ -4,6 +4,20 @@ A modern flight-discovery dashboard for finding affordable worldwide trips from 
 
 ## Features
 
+### Search flights (Google Flights-style)
+
+Switch to **Search flights** for a route search like Google Flights: from Penang, Kuala Lumpur, or both; any destination airport; round trip or one way; dates; adults, children, and lap infants; cabin class; and carry-on bags. Results show times, duration, stops and layovers, emissions, and price, with full leg-by-leg details. For round trips, pick an outbound flight, then choose its return and book on Google Flights.
+
+Filters go further than Google Flights and apply instantly without spending extra searches:
+
+- Stops, airlines, and departure airport (each with its cheapest fare), and maximum price
+- Departure and arrival time windows, maximum trip duration, and avoiding red-eye flights
+- Minimum layover (avoid tight connections) and maximum layover, avoiding overnight layovers, and excluding specific connecting airports
+- Hiding flights often delayed 30+ minutes, and lower-emission flights only
+- Sort by best, cheapest, fastest, earliest or latest departure, earliest arrival, or lowest emissions; price insight shows whether fares are low, typical, or high for the route
+
+### Explore map
+
 - Live fare discovery through SerpApi Google Travel Explore
 - Airport-only worldwide destination search
 - Exact departure and return dates on every displayed live fare
