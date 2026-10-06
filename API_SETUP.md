@@ -19,6 +19,7 @@ Keep the key private. Do not add it to frontend HTML or commit it to source cont
 
 - **API ready** means the local server is running and found the private key.
 - **API offline** means `START_DASHBOARD.cmd` needs to be run again.
+- **Unrecognised host** means the dashboard was opened under a name other than `127.0.0.1` or `localhost`. Use `http://127.0.0.1:4174`, or add the name to `ALLOWED_HOSTS` in `.env` (for example `ALLOWED_HOSTS=radar.lan:4174`).
 - Check `http://127.0.0.1:4174/api/status` to confirm the local API connection without exposing the key.
 - SerpApi's free plan has a monthly search limit. Searching both airports or several trip-duration groups uses multiple searches.
 

@@ -1,7 +1,8 @@
 import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
-import { extname, join, normalize } from "node:path";
-import { fileURLToPath } from "node:url";
+import { extname, join, normalize, sep } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { allowedHostsFor, isAllowedHost, isCrossSiteRequest } from "./lib/requestGuard.mjs";
 import { assembleRoutes, collapseDeals, daysBetween, durationGroupsFor, googleFlightsUrl, mapDestination, mapSpecificFlight, parsePrice } from "./lib/fares.mjs";
 
 const root = fileURLToPath(new URL("./dist", import.meta.url));
@@ -529,9 +530,17 @@ async function exploreFlights(requestUrl, response) {
   });
 }
 
-const server = createServer(async (request, response) => {
+export const server = createServer(async (request, response) => {
+  // Checked against the port actually bound (tests listen on a random one).
+  const allowedHosts = allowedHostsFor(server.address()?.port ?? port, process.env.ALLOWED_HOSTS);
+  if (!isAllowedHost(request.headers.host, allowedHosts)) {
+    return sendJson(response, 421, { error: "Unrecognised host. Open the dashboard at http://127.0.0.1 or http://localhost." });
+  }
   try {
     const url = new URL(request.url, `http://${request.headers.host}`);
+    if (url.pathname.startsWith("/api/") && isCrossSiteRequest(request.headers, allowedHosts)) {
+      return sendJson(response, 403, { error: "Cross-site requests to the flight API are not allowed." });
+    }
     if (url.pathname === "/api/status") {
       return sendJson(response, 200, {
         ok: true,
@@ -547,7 +556,7 @@ const server = createServer(async (request, response) => {
 
     const requested = url.pathname === "/" ? "/index.html" : url.pathname;
     const path = normalize(join(root, requested));
-    if (!path.startsWith(root)) return sendJson(response, 403, { error: "Forbidden" });
+    if (!path.startsWith(root + sep)) return sendJson(response, 403, { error: "Forbidden" });
     await stat(path);
     // Vite fingerprints its bundles (/assets/index-*), so those can be cached for good;
     // other static assets (the map image) are cached for a day.
@@ -574,7 +583,10 @@ server.on("error", (error) => {
   console.error("Global Radar server error:", error);
 });
 
-server.listen(port, "127.0.0.1", () => {
-  console.log(`Global Radar is running at http://127.0.0.1:${port}`);
-  console.log(apiKey ? "SerpApi live fares enabled." : "Demo mode: set SERPAPI_KEY to enable live fares.");
-});
+// Listen only when run directly (`npm start`), so tests can import the server.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  server.listen(port, "127.0.0.1", () => {
+    console.log(`Global Radar is running at http://127.0.0.1:${port}`);
+    console.log(apiKey ? "SerpApi live fares enabled." : "Demo mode: set SERPAPI_KEY to enable live fares.");
+  });
+}

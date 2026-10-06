@@ -54,9 +54,9 @@ Run the unit tests with `npm test`. GitHub Actions runs the tests, the productio
 
 See [API_SETUP.md](API_SETUP.md) for additional setup and troubleshooting details.
 
-## Privacy
+## Privacy and security
 
-The SerpApi key is read only by the local Node.js backend. Private `.env` files, dependencies, generated builds, browser profiles, screenshots, and internal test artifacts are excluded from Git.
+The SerpApi key is read only by the local Node.js backend. The backend listens on `127.0.0.1` only, answers only requests addressed to `127.0.0.1` or `localhost` (blocking DNS-rebinding attacks), and refuses API calls that browsers mark as coming from another website, so other pages cannot spend your search quota. To reach it under another name (for example through a local reverse proxy), list it in `.env` as `ALLOWED_HOSTS=radar.lan:4174`. Private `.env` files, dependencies, generated builds, browser profiles, screenshots, and internal test artifacts are excluded from Git.
 
 ## APIs
 
