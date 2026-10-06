@@ -2,7 +2,7 @@
 /* Icons use display=block so ligature names ("flight_takeoff") never flash as text while loading.
    icon_names trims the font from ~1.4 MB to ~15 KB. It must list every icon App.jsx uses,
    sorted; src/iconFont.test.js fails if one is missing. */
-@import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0..1,0&icon_names=add,airlines,arrow_back,arrow_forward,bookmark,bookmark_add,bookmark_added,calendar_month,calendar_today,calendar_view_month,close,cloud_off,connecting_airports,date_range,download,expand_less,expand_more,filter_alt_off,flight,flight_land,flight_takeoff,info,ios_share,location_on,luggage,my_location,nightlight,open_in_new,open_with,partly_cloudy_day,person,progress_activity,public,rainy,refresh,remove,restart_alt,route,savings,schedule,search,sync,travel_explore,trending_down,trending_up,tune,warning&display=block");
+@import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0..1,0&icon_names=add,airlines,arrow_back,arrow_forward,bookmark,bookmark_add,bookmark_added,calendar_month,calendar_today,calendar_view_month,close,cloud_off,connecting_airports,date_range,download,expand_less,expand_more,filter_alt_off,flight,flight_land,flight_takeoff,info,ios_share,location_on,luggage,my_location,nightlight,notifications,notifications_active,open_in_new,open_with,partly_cloudy_day,person,progress_activity,public,rainy,refresh,remove,restart_alt,route,savings,schedule,search,sync,travel_explore,trending_down,trending_up,tune,warning&display=block");
 
 :root {
   color: #f5f8ff;
@@ -539,3 +539,36 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
 .fs-nearby-grid button:not(:disabled):hover { border-color: var(--teal); }
 .fs-nearby-grid button:disabled:not(.current) { opacity: .5; cursor: default; }
 .fs-share { margin-left: auto; }
+
+/* Track route + tracked routes list */
+.fs-results-head h2 { flex: 1 1 auto; }
+.fs-track { display: inline-flex; align-items: center; gap: 5px; border: 1px solid rgba(35, 201, 213, .5); border-radius: 999px; background: transparent; color: var(--teal); padding: 6px 12px; font-size: 11px; font-weight: 700; }
+.fs-track.active { background: rgba(35, 201, 213, .14); }
+.fs-track .material-symbols-rounded { font-size: 16px; }
+.fs-tracked { margin: 14px 28px 0; padding: 12px 16px; border: 1px solid var(--line); border-radius: 14px; background: #0b1530; }
+.fs-tracked h2 { margin: 0; font: 700 18px "Barlow Condensed", sans-serif; }
+.fs-tracked summary { cursor: pointer; font-size: 13px; font-weight: 700; }
+.fs-tracked .fs-hint { margin: 4px 0 8px; }
+.fs-tracked ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.fs-tracked li { display: grid; grid-template-columns: 1fr auto auto 30px; align-items: center; gap: 12px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; background: #0d1832; }
+.fs-tracked li.expired { opacity: .55; }
+.fs-tracked-main b, .fs-tracked-main small, .fs-tracked-price b, .fs-tracked-price small { display: block; }
+.fs-tracked-main b { font-size: 14px; }
+.fs-tracked-main small, .fs-tracked-price small { color: var(--muted); font-size: 11px; }
+.fs-tracked-price { text-align: right; }
+.fs-tracked-price b { color: var(--gold); font-size: 14px; }
+.fs-tracked-price small.down { color: #45e68a; }
+.fs-tracked-price small.up { color: var(--coral); }
+.fs-tracked-check { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--teal); padding: 6px 10px; font-size: 11px; font-weight: 700; }
+.fs-tracked-check small { color: var(--muted); }
+.fs-tracked-check .material-symbols-rounded { font-size: 15px; }
+.fs-tracked-remove { width: 28px; height: 28px; border: 0; border-radius: 50%; background: transparent; color: var(--muted); display: grid; place-items: center; }
+.fs-tracked-remove:hover { color: var(--coral); }
+.fs-amenities { color: #82ddb3 !important; }
+@media (max-width: 820px) {
+  .fs-tracked { margin: 12px 10px 0; }
+  .fs-tracked li { grid-template-columns: 1fr 30px; }
+  .fs-tracked-price { text-align: left; grid-column: 1; }
+  .fs-tracked-check { grid-column: 1; justify-self: start; }
+  .fs-tracked-remove { grid-column: 2; grid-row: 1; }
+}

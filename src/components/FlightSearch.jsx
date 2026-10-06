@@ -344,6 +344,28 @@ function FlightFilters({ filters, setFilters, facets, total, shown, mobile = fal
       </div>
 
       <div className="filter-section">
+        <div className="filter-title"><span>COMFORT</span></div>
+        {facets.legroom[1] > 0 && <>
+          <div className="fs-filter-row"><span>Minimum legroom</span><b>{filters.minLegroom === null ? "Any" : `${filters.minLegroom} in+`}</b></div>
+          <input type="range" aria-label="Minimum legroom (inches)" min={facets.legroom[0]} max={facets.legroom[1]} step="1" value={filters.minLegroom ?? facets.legroom[0]} onChange={(event) => { const value = Number(event.target.value); update({ minLegroom: value <= facets.legroom[0] ? null : value }); }} />
+          <p className="fs-hint">Seat pitch on every leg. Flights without legroom data are hidden while this is set.</p>
+        </>}
+        <p className="fs-subtitle">On every leg</p>
+        <label className="check-row fs-priced"><input type="checkbox" checked={filters.requireWifi} onChange={(event) => update({ requireWifi: event.target.checked })} /><span>Wi-Fi (free or paid)</span><small>{facets.amenities.wifi}</small></label>
+        <label className="check-row fs-priced"><input type="checkbox" checked={filters.requirePower} onChange={(event) => update({ requirePower: event.target.checked })} /><span>In-seat power or USB</span><small>{facets.amenities.power}</small></label>
+        <label className="check-row fs-priced"><input type="checkbox" checked={filters.requireVideo} onChange={(event) => update({ requireVideo: event.target.checked })} /><span>Entertainment (video or streaming)</span><small>{facets.amenities.video}</small></label>
+        {facets.aircraft.length > 0 && <>
+          <p className="fs-subtitle">Aircraft</p>
+          {facets.aircraft.map((plane) => (
+            <label className="check-row fs-priced" key={plane.name}>
+              <input type="checkbox" checked={!filters.excludedAircraft.includes(plane.name)} onChange={() => update({ excludedAircraft: toggleIn(filters.excludedAircraft, plane.name) })} />
+              <span>{plane.name}</span><small>{money(plane.minPrice)}</small>
+            </label>
+          ))}
+        </>}
+      </div>
+
+      <div className="filter-section">
         <div className="filter-title"><span>MORE</span></div>
         <label className="check-row"><input type="checkbox" checked={filters.hideOftenDelayed} onChange={(event) => update({ hideOftenDelayed: event.target.checked })} /><span>Hide flights often delayed 30+ min</span></label>
         <label className="check-row"><input type="checkbox" checked={filters.lowerEmissionsOnly} onChange={(event) => update({ lowerEmissionsOnly: event.target.checked })} /><span>Lower-emission flights only</span></label>
@@ -407,6 +429,7 @@ function FlightCard({ flight, mode, onSelect, bookingUrl, expanded, onToggle }) 
               <p className="fs-leg-meta">Travel time: {formatDuration(leg.duration)}</p>
               <p><b>{leg.arriveTime}</b> {leg.toName} ({leg.to}){leg.arriveDate !== leg.departDate && <span className="fs-muted"> · {leg.arriveDate}</span>}</p>
               <p className="fs-leg-meta">{[leg.airline, leg.travelClass, leg.airplane, leg.flightNumber, leg.legroom && `Legroom ${leg.legroom}`].filter(Boolean).join(" · ")}</p>
+              {(leg.wifi || leg.power || leg.video) && <p className="fs-leg-meta fs-amenities">{[leg.wifi && "Wi-Fi", leg.power && "Power/USB", leg.video && "Entertainment"].filter(Boolean).join(" · ")}</p>}
             </div>
             {flight.layovers[index] && <p className={`fs-layover ${flight.layovers[index].duration < TIGHT_CONNECTION ? "warn" : ""}`}>
               <Icon>schedule</Icon>{formatDuration(flight.layovers[index].duration)} layover · {flight.layovers[index].name} ({flight.layovers[index].airport}){flight.layovers[index].overnight ? " · overnight" : ""}
@@ -432,6 +455,72 @@ function PriceInsights({ insights, cheapest }) {
       <Icon>{level === "low" ? "trending_down" : level === "high" ? "trending_up" : "info"}</Icon>
       <p>Prices are currently <b>{level}</b> for this route. Typical range is <b>MYR {low.toLocaleString()}–{high.toLocaleString()}</b>{cheapest ? `; the cheapest shown is MYR ${cheapest.toLocaleString()}` : ""}.</p>
     </div>
+  );
+}
+
+// Tracked routes: a search key is the full query (airports, dates, travellers, cabin, bags).
+function trackKey(form) {
+  const params = flightQuery(form);
+  params.delete("toName");
+  return params.toString();
+}
+function describeSearch(form) {
+  const fmt = (iso) => new Date(`${iso}T00:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" });
+  const from = form.from === "ALL" ? "PEN/KUL" : form.from;
+  const travellers = form.adults + form.children + form.infants;
+  const cabin = CABINS.find(([value]) => value === form.cabin)?.[1] || "Economy";
+  return {
+    route: `${from} → ${form.to?.id || "?"}`,
+    detail: `${fmt(form.depart)}${form.trip === "round" && form.return ? ` – ${fmt(form.return)}` : " · one way"} · ${travellers} ${travellers === 1 ? "traveller" : "travellers"} · ${cabin}`,
+  };
+}
+const MAX_TRACKED = 12;
+const MAX_HISTORY = 30;
+
+function TrackedRoutes({ tracked, onCheck, onRemove, busy, collapsed = false }) {
+  if (!tracked.length) return null;
+  const ago = (iso) => {
+    const minutes = Math.round((Date.now() - Date.parse(iso)) / 60000);
+    if (minutes < 60) return `${Math.max(1, minutes)} min ago`;
+    if (minutes < 48 * 60) return `${Math.round(minutes / 60)} hr ago`;
+    return `${Math.round(minutes / 1440)} days ago`;
+  };
+  const list = (
+      <ul>
+        {tracked.map((item) => {
+          const { route, detail } = describeSearch(item.form);
+          const change = item.lastPrice !== null && item.startPrice !== null ? item.lastPrice - item.startPrice : 0;
+          const expired = daysFromToday(item.form.depart) < 0;
+          return (
+            <li key={item.key} className={expired ? "expired" : ""}>
+              <span className="fs-tracked-main"><b>{route}</b><small>{detail}</small></span>
+              <span className="fs-tracked-price">
+                <b>{item.lastPrice === null ? "No fares" : `MYR ${item.lastPrice.toLocaleString()}`}</b>
+                <small className={change < 0 ? "down" : change > 0 ? "up" : ""}>
+                  {expired ? "Dates passed" : change ? `${change < 0 ? "Down" : "Up"} MYR ${Math.abs(change).toLocaleString()} since tracking` : "No change yet"}
+                  {` · ${ago(item.lastChecked)}`}
+                </small>
+              </span>
+              {!expired && <button type="button" className="fs-tracked-check" onClick={() => onCheck(item)} disabled={busy}><Icon>refresh</Icon>Check price <small>({item.form.from === "ALL" ? 2 : 1})</small></button>}
+              <button type="button" className="fs-tracked-remove" onClick={() => onRemove(item)} aria-label={`Stop tracking ${route}`}><Icon>close</Icon></button>
+            </li>
+          );
+        })}
+      </ul>
+  );
+  const hint = <p className="fs-hint">Searching a tracked route updates its price automatically. "Check price" runs that search now (one search per departure airport, shown in brackets).</p>;
+  return collapsed ? (
+    <details className="fs-tracked fs-tracked-collapsed">
+      <summary>Tracked routes ({tracked.length})</summary>
+      {hint}
+      {list}
+    </details>
+  ) : (
+    <section className="fs-tracked" aria-label="Tracked routes">
+      <h2>Tracked routes</h2>
+      {hint}
+      {list}
+    </section>
   );
 }
 
@@ -473,7 +562,9 @@ function NearbyDates({ nearby, loading, searchesPerDate, onCompare, onPick, roun
 
 export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
   const [form, setForm] = usePersistentState("flightSearchForm", { ...DEFAULT_FORM, from: defaultOrigin }, LINKED_FORM, validForm);
-  const [filters, setFilters] = usePersistentState("flightFilters", DEFAULT_FLIGHT_FILTERS, undefined, (value) => value && typeof value === "object" && Array.isArray(value.departWindow));
+  const [storedFilters, setFilters] = usePersistentState("flightFilters", DEFAULT_FLIGHT_FILTERS, undefined, (value) => value && typeof value === "object" && Array.isArray(value.departWindow));
+  // Filters saved by an older version lack newer keys; fill them from the defaults.
+  const filters = useMemo(() => ({ ...DEFAULT_FLIGHT_FILTERS, ...storedFilters }), [storedFilters]);
   const [sort, setSort] = usePersistentState("flightSort", "best", undefined, (value) => value in SORTS);
   const [results, setResults] = useState(null);
   const [outbound, setOutbound] = useState(null);
@@ -485,6 +576,7 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
   const [searched, setSearched] = useState(null); // the form behind the current results
   const [nearby, setNearby] = useState(null);
   const [nearbyLoading, setNearbyLoading] = useState(false);
+  const [tracked, setTracked] = usePersistentState("trackedRoutes", [], undefined, Array.isArray);
 
   const flights = useMemo(() => results?.flights || [], [results]);
   const facets = useMemo(() => flightFacets(flights), [flights]);
@@ -529,7 +621,39 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
     outboundResults.current = null;
     setNearby(null);
     const payload = await runSearch("", null, searchForm);
-    if (payload) setSearched(searchForm);
+    if (payload) {
+      setSearched(searchForm);
+      recordTrackedPrice(searchForm, payload);
+    }
+    return payload;
+  };
+  const cheapestOf = (payload) => (payload?.flights?.length ? Math.min(...payload.flights.map((flight) => flight.price)) : null);
+  // A completed search of a tracked route records its cheapest fare (no extra search).
+  const recordTrackedPrice = (searchForm, payload) => {
+    const key = trackKey(searchForm);
+    const price = cheapestOf(payload);
+    const at = new Date().toISOString();
+    setTracked((current) => current.map((item) => item.key === key
+      ? { ...item, lastPrice: price, lastChecked: at, history: [...(item.history || []), { at, price }].slice(-MAX_HISTORY) }
+      : item));
+  };
+  const isTracked = searched ? tracked.some((item) => item.key === trackKey(searched)) : false;
+  const toggleTrack = () => {
+    if (!searched) return;
+    const key = trackKey(searched);
+    if (isTracked) {
+      setTracked((current) => current.filter((item) => item.key !== key));
+      setStatus({ message: "Stopped tracking this route.", kind: "info" });
+      return;
+    }
+    const price = flights.length ? Math.min(...flights.map((flight) => flight.price)) : null;
+    const at = new Date().toISOString();
+    setTracked((current) => [{ key, form: searched, startPrice: price, lastPrice: price, lastChecked: at, history: [{ at, price }] }, ...current].slice(0, MAX_TRACKED));
+    setStatus({ message: "Tracking this route. Its price updates whenever you search it.", kind: "success" });
+  };
+  const openTracked = (item) => {
+    setForm(item.form);
+    search(item.form);
   };
 
   // A shared link opens straight onto its results, like a Google Flights link.
@@ -634,6 +758,7 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
         {results && <section className="fs-results" aria-label="Flight results">
           <div className="fs-results-head">
             <h2>{mode === "round-return" ? "Choose a return flight" : mode === "round-outbound" ? "Choose an outbound flight" : "Flights"}{form.to?.name ? ` · ${form.to.name}` : ""}</h2>
+            {mode !== "round-return" && searched && <button type="button" className={`fs-track ${isTracked ? "active" : ""}`} aria-pressed={isTracked} onClick={toggleTrack}><Icon>{isTracked ? "notifications_active" : "notifications"}</Icon>{isTracked ? "Tracking price" : "Track this route"}</button>}
             <div className="fs-sorts" role="group" aria-label="Sort flights">
               {Object.entries(SORTS).map(([key, { label }]) => (
                 <button type="button" key={key} className={sort === key ? "active" : ""} aria-pressed={sort === key} onClick={() => setSort(key)}>{label}</button>
@@ -666,6 +791,7 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
           )}
         </section>}
 
+        <TrackedRoutes tracked={tracked} busy={loading} collapsed={Boolean(results)} onCheck={openTracked} onRemove={(item) => setTracked((current) => current.filter((entry) => entry.key !== item.key))} />
         {!results && !loading && <div className="fs-welcome">
           <Icon>travel_explore</Icon>
           <h2>Search flights from Penang and Kuala Lumpur</h2>

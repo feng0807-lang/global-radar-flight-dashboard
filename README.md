@@ -14,9 +14,11 @@ Filters go further than Google Flights and apply instantly without spending extr
 - Departure and arrival time windows, maximum trip duration, and avoiding red-eye flights
 - Minimum layover (avoid tight connections) and maximum layover, avoiding overnight layovers, and excluding specific connecting airports
 - Hiding flights often delayed 30+ minutes, and lower-emission flights only
+- Comfort, which Google Flights cannot filter: minimum legroom, Wi-Fi, in-seat power/USB, and entertainment on every leg, and excluding aircraft types (grouped by family, e.g. Boeing 787)
 - Sort by best, cheapest, fastest, earliest or latest departure, earliest arrival, or lowest emissions; price insight shows whether fares are low, typical, or high for the route
 - Price history chart for the route (from Google Flights price insights, no extra searches), with the typical price range marked
 - Compare nearby dates (±1 or ±3 days, same trip length) to find the cheapest day; the button shows how many searches it will use, and switching to a compared date is served from cache
+- Tracked routes: track a search to watch its price; every later search of that route records the cheapest fare for free, and the list shows the change since you started tracking, with a one-click "Check price"
 - Shareable flight searches: the address bar carries the route, dates, travellers, cabin, and bags, and a shared link opens straight onto its results
 
 ### Explore map
