@@ -1,10 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 
 // The icon font is requested with Google Fonts' icon_names subset, so an icon used in
 // the app but missing from that list would render as its ligature text ("bookmark").
-const app = readFileSync(new URL("./App.jsx", import.meta.url), "utf8");
+// Every .jsx file under src/ is scanned.
+const srcDir = new URL("./", import.meta.url);
+const jsxFiles = readdirSync(srcDir, { recursive: true }).filter((file) => file.endsWith(".jsx"));
+const app = jsxFiles.map((file) => readFileSync(new URL(file, srcDir), "utf8")).join("\n");
 const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
 function iconsUsedInApp() {
@@ -31,6 +34,7 @@ test("the icon font subset lists every icon the app renders", () => {
   assert.deepEqual(unresolved, [], "an <Icon> takes its name from a variable; use string literals so the subset can be checked");
   const missing = [...names].filter((name) => !subset.includes(name));
   assert.deepEqual(missing, [], `add these to icon_names in src/styles.css: ${missing.join(", ")}`);
+  assert.ok(jsxFiles.length > 1 && names.size > 30, `scanned ${jsxFiles.length} files, ${names.size} icons`);
 });
 
 test("the icon_names list is sorted and has no unused entries", () => {
