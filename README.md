@@ -16,10 +16,10 @@ A modern flight-discovery dashboard for finding affordable worldwide trips from 
 - Fare spread chart: a histogram of fares in MYR 500 bands that shows what a bigger budget would unlock; pick a bar to set the maximum fare
 - Export the current results (or saved deals) as a spreadsheet-ready CSV
 - Saved deals and filter preferences persist in the browser, including saved live fares
-- Price tracking: saved live fares remember their price, and later live searches show how much each has gone up or down
+- Price tracking: saved live fares remember their price, and a later live search that prices the same trip (city, departure airport, and dates) shows how much it has gone up or down
 - Pins are placed with a projection calibrated to the map artwork (Patterson cylindrical), so cities land on the right spot
 - Map labels declutter automatically: cheaper fares keep their labels, others flip sides or collapse to a dot that expands on hover; zooming in reveals more
-- Shareable searches: the address bar tracks airport, fare range, stops, dates, and destination, and **Share search** copies the link
+- Shareable searches: the address bar tracks airport, fare range, stops, dates, and destination, and **Share search** copies the link; opening a shared link applies it for that visit without overwriting your own saved preferences
 - Every deal links straight to a matching Google Flights search
 - Keyboard and screen-reader friendly: deals open with Tab + Enter, panels behave as modal dialogs, and search status is announced
 - Keyboard shortcuts: `/` focuses destination search, `Esc` closes panels

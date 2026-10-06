@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { projectToContainer } from "./mapProjection.js";
+import { HOME_AIRPORTS, isLiveDeal, sameTripFare, searchableText } from "./savedDeals.js";
 
 const STORAGE_PREFIX = "global-radar:";
-const HOME_AIRPORTS = { PEN: { lat: 5.2971, lon: 100.2769 }, KUL: { lat: 2.7456, lon: 101.7099 } };
 
 // Search settings carried in a shared link (?from=KUL&max=1500&...). They override
 // remembered preferences for this visit so the recipient sees the same search.
@@ -119,9 +119,20 @@ function readStored(key, fallback) {
 
 // useState that mirrors its value into localStorage. Storage can be unavailable
 // (private windows, blocked site data), so every access is guarded.
-function usePersistentState(key, fallback, override) {
-  const [value, setValue] = useState(() => override !== undefined ? override : readStored(key, fallback));
+// `override` (from a shared link) applies to this visit only: it is not written back
+// until the user changes the value. `isValid` rejects stale or corrupt stored values.
+function usePersistentState(key, fallback, override, isValid = () => true) {
+  const [value, setValue] = useState(() => {
+    if (override !== undefined) return override;
+    const stored = readStored(key, fallback);
+    return isValid(stored) ? stored : fallback;
+  });
+  const skipWrite = useRef(override !== undefined);
   useEffect(() => {
+    if (skipWrite.current) {
+      skipWrite.current = false;
+      return;
+    }
     try {
       window.localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(value));
     } catch {
@@ -182,13 +193,6 @@ function boxesOverlap(a, b) {
   return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 }
 
-function isLiveDeal(deal) {
-  return deal?.theme === "Live";
-}
-
-function searchableText(value) {
-  return String(value || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-}
 
 function FilterPanel({ minPrice, setMinPrice, maxPrice, setMaxPrice, stopFilter, setStopFilter, themes, toggleTheme, reset, dateMode, setDateMode, outboundDate, setOutboundDate, returnDate, setReturnDate, travelMonth, setTravelMonth, minTripDays, setMinTripDays, maxTripDays, setMaxTripDays, selectedCountry, setSelectedCountry, countries, weatherFilter, setWeatherFilter, minDryPercent, setMinDryPercent, mobile = false, close }) {
   return (
@@ -281,21 +285,25 @@ const SPREAD_STEP = 500;
 const SPREAD_TOP = 5000;
 
 // Histogram of fares in MYR 500 bands (the last band is 5,000+). Bands inside the
-// fare range are teal; picking a band sets the maximum fare to its upper edge.
+// fare range are teal; picking a band sets the maximum fare to its upper edge. The
+// 5,000+ band sits above the fare slider's limit, so it informs but cannot be picked.
 function FareSpread({ prices, minPrice, maxPrice, onPick }) {
   const [active, setActive] = useState(null);
-  const bands = Array.from({ length: SPREAD_TOP / SPREAD_STEP + 1 }, (_, index) => {
+  const lastIndex = SPREAD_TOP / SPREAD_STEP;
+  const counts = new Array(lastIndex + 1).fill(0);
+  for (const price of prices) counts[Math.min(lastIndex, Math.max(0, Math.floor(price / SPREAD_STEP)))] += 1;
+  const bands = counts.map((count, index) => {
     const start = index * SPREAD_STEP;
-    const last = start >= SPREAD_TOP;
-    const end = last ? Number.POSITIVE_INFINITY : start + SPREAD_STEP - 1;
+    const last = index === lastIndex;
+    const end = start + SPREAD_STEP;
     return {
       index,
       start,
       last,
-      label: last ? `MYR ${SPREAD_TOP.toLocaleString()}+` : `MYR ${start.toLocaleString()}–${end.toLocaleString()}`,
-      count: prices.filter((price) => price >= start && price <= end).length,
-      inRange: start <= maxPrice && end >= minPrice,
-      pick: last ? SPREAD_TOP : start + SPREAD_STEP,
+      label: last ? `MYR ${SPREAD_TOP.toLocaleString()}+` : `MYR ${start.toLocaleString()}–${(end - 1).toLocaleString()}`,
+      count,
+      inRange: !last && start <= maxPrice && end > minPrice,
+      pick: last ? null : end,
     };
   });
   const tallest = Math.max(1, ...bands.map((band) => band.count));
@@ -315,8 +323,9 @@ function FareSpread({ prices, minPrice, maxPrice, onPick }) {
             onMouseEnter={() => setActive(band.index)}
             onFocus={() => setActive(band.index)}
             onBlur={() => setActive(null)}
-            onClick={() => onPick(band.pick)}
-            aria-label={`${band.label}: ${band.count} ${band.count === 1 ? "destination" : "destinations"}, ${band.inRange ? "within" : "outside"} your fare range. Set maximum fare to MYR ${band.pick.toLocaleString()}.`}
+            onClick={() => band.pick !== null && onPick(band.pick)}
+            aria-disabled={band.pick === null}
+            aria-label={`${band.label}: ${band.count} ${band.count === 1 ? "destination" : "destinations"}, ${band.inRange ? "within" : "outside"} your fare range.${band.pick === null ? " Above the MYR 5,000 search limit." : ` Set maximum fare to MYR ${band.pick.toLocaleString()}.`}`}
           >
             {band.count > 0 && <i className="spread-bar" style={{ height: `${Math.max(8, (band.count / tallest) * 100)}%` }} />}
           </button>
@@ -324,7 +333,7 @@ function FareSpread({ prices, minPrice, maxPrice, onPick }) {
         {shown && <div className={`spread-tooltip ${shown.index <= 1 ? "edge-start" : shown.index >= bands.length - 2 ? "edge-end" : ""}`} style={{ "--slot": shown.index }} aria-hidden="true">
           <b>{shown.label}</b>
           <span>{shown.count} {shown.count === 1 ? "destination" : "destinations"}</span>
-          <small>{shown.inRange ? "Within your fare range" : "Outside your fare range"}</small>
+          <small>{shown.last ? "Above the MYR 5,000 search limit" : shown.inRange ? "Within your fare range" : "Outside your fare range"}</small>
         </div>}
       </div>
       <div className="fare-spread-axis" aria-hidden="true">
@@ -399,7 +408,12 @@ function DealCard({ deal, saved, onSave, onOpen, highlighted, onHover, priceChan
 export function App() {
   const [deals, setDeals] = useState(DEALS);
   const [origin, setOrigin] = usePersistentState("origin", "ALL", SHARED_SEARCH.origin);
-  const [minPrice, setMinPrice] = usePersistentState("minPrice", 0, SHARED_SEARCH.minPrice);
+  // Clamp a shared minimum against the maximum this visit will actually use, so a
+  // min-only link never produces min >= max (and the clamp is not saved either).
+  const sharedMinPrice = SHARED_SEARCH.minPrice === undefined
+    ? undefined
+    : Math.max(0, Math.min(SHARED_SEARCH.minPrice, (SHARED_SEARCH.maxPrice ?? readStored("maxPrice", 3000)) - 50));
+  const [minPrice, setMinPrice] = usePersistentState("minPrice", 0, sharedMinPrice);
   const [maxPrice, setMaxPrice] = usePersistentState("maxPrice", 3000, SHARED_SEARCH.maxPrice);
   const [stopFilter, setStopFilter] = usePersistentState("stops", "any", SHARED_SEARCH.stops);
   const [themes, setThemes] = usePersistentState("themes", []);
@@ -412,15 +426,27 @@ export function App() {
   // Saved deals are stored whole so live fares stay saved after a refresh or new search.
   const [savedDeals, setSavedDeals] = usePersistentState("savedDeals", DEALS.filter((deal) => [1, 4, 8].includes(deal.id)));
   const saved = useMemo(() => savedDeals.map((deal) => deal.id), [savedDeals]);
-  // Saved deals remember the fare at save time; later live searches for the same
-  // city record the latest fare so the card can show how the price has moved.
-  // Only live fares are compared: demo prices are illustrative and would show fake moves.
-  const savedByCity = useMemo(() => new Map(savedDeals.filter(isLiveDeal).map((deal) => [searchableText(deal.city), deal])), [savedDeals]);
+  // Saved deals remember the fare at save time; a later live search that prices the
+  // same trip (city, departure airport, and dates) records the latest fare so the card
+  // can show how the price has moved. Only live fares are compared: demo prices are
+  // illustrative and would show fake moves.
+  const savedLiveByCity = useMemo(() => {
+    const byCity = new Map();
+    for (const entry of savedDeals.filter(isLiveDeal)) {
+      const key = searchableText(entry.city);
+      byCity.set(key, [...(byCity.get(key) || []), entry]);
+    }
+    return byCity;
+  }, [savedDeals]);
   const priceChangeFor = (deal) => {
     if (!isLiveDeal(deal)) return 0;
-    const entry = savedDeals.find((item) => item.id === deal.id && isLiveDeal(item)) || savedByCity.get(searchableText(deal.city));
-    if (!entry) return 0;
-    return deal.price - (entry.savedPrice ?? entry.price);
+    // Saved-view cards are saved entries already carrying their latest fare.
+    if (deal.savedPrice !== undefined) return deal.price - deal.savedPrice;
+    for (const entry of savedLiveByCity.get(searchableText(deal.city)) || []) {
+      const fare = sameTripFare(entry, deal);
+      if (fare) return fare.price - (entry.savedPrice ?? entry.price);
+    }
+    return 0;
   };
   const [hoveredId, setHoveredId] = useState(null);
   const searchInputRef = useRef(null);
@@ -433,9 +459,10 @@ export function App() {
   const [liveLoading, setLiveLoading] = useState(false);
   const [apiHealth, setApiHealth] = useState("checking");
   const [dateMode, setDateMode] = usePersistentState("dateMode", "anytime", SHARED_SEARCH.dateMode);
-  const [outboundDate, setOutboundDate] = useState(SHARED_SEARCH.outboundDate || "");
-  const [returnDate, setReturnDate] = useState(SHARED_SEARCH.returnDate || "");
-  const [travelMonth, setTravelMonth] = useState(SHARED_SEARCH.travelMonth || monthValue(1));
+  // Dates persist too (so "Specific" mode reloads with its dates), but past ones are dropped.
+  const [outboundDate, setOutboundDate] = usePersistentState("outboundDate", "", SHARED_SEARCH.outboundDate, (value) => value === "" || (isIsoDate(value) && daysFromToday(value) >= 0));
+  const [returnDate, setReturnDate] = usePersistentState("returnDate", "", SHARED_SEARCH.returnDate, (value) => value === "" || (isIsoDate(value) && daysFromToday(value) >= 0));
+  const [travelMonth, setTravelMonth] = usePersistentState("travelMonth", monthValue(1), SHARED_SEARCH.travelMonth, (value) => /^\d{4}-\d{2}$/.test(value) && value >= monthValue(0));
   const [minTripDays, setMinTripDays] = usePersistentState("minTripDays", "4", SHARED_SEARCH.minTripDays);
   const [maxTripDays, setMaxTripDays] = usePersistentState("maxTripDays", "10", SHARED_SEARCH.maxTripDays);
   const [selectedCountry, setSelectedCountry] = useState("ALL");
@@ -533,6 +560,11 @@ export function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  // Storage may hold a bad pair (e.g. edited by hand): keep min below max.
+  useEffect(() => {
+    if (minPrice >= maxPrice) setMinPrice(Math.max(0, maxPrice - 50));
+  }, [minPrice, maxPrice, setMinPrice]);
+
   const shareParams = useMemo(() => {
     const params = new URLSearchParams();
     if (origin !== "ALL") params.set("from", origin);
@@ -587,7 +619,16 @@ export function App() {
   const filtered = useMemo(() => {
     const bySort = (a, b) => sort === "price" ? a.price - b.price : sort === "days" ? a.days - b.days : a.city.localeCompare(b.city);
     if (savedOnly) {
-      return savedDeals.map((deal) => ({ ...deal, price: deal.latestPrice ?? deal.price, date: deal.latestDate ?? deal.date })).sort(bySort);
+      // Show each saved trip at its latest known fare, with that search's booking
+      // details, so the drawer and CSV never mix data from two searches.
+      return savedDeals.map(({ latest, latestPrice, latestDate, ...deal }) => latest ? {
+        ...deal,
+        price: latest.price,
+        link: latest.link ?? deal.link,
+        airline: latest.airline ?? deal.airline,
+        airlineCode: latest.airlineCode ?? deal.airlineCode,
+        originOptions: latest.originOptions?.length ? latest.originOptions : deal.originOptions,
+      } : deal).sort(bySort);
     }
     return nonPriceMatches.filter((deal) => deal.price >= minPrice && deal.price <= maxPrice).sort(bySort);
   }, [nonPriceMatches, minPrice, maxPrice, savedOnly, savedDeals, sort]);
@@ -607,7 +648,7 @@ export function App() {
   const toggleTheme = (theme) => setThemes((current) => current.includes(theme) ? current.filter((item) => item !== theme) : [...current, theme]);
   const toggleSave = (deal) => setSavedDeals((current) => current.some((item) => item.id === deal.id)
     ? current.filter((item) => item.id !== deal.id)
-    : [...current, { ...deal, savedPrice: deal.price, savedAt: new Date().toISOString(), latestPrice: undefined, latestDate: undefined }]);
+    : [...current, { ...deal, savedPrice: deal.price, savedAt: new Date().toISOString(), latest: undefined }]);
   const shareSearch = async () => {
     const link = `${window.location.origin}${window.location.pathname}${shareParams ? `?${shareParams}` : ""}`;
     try {
@@ -721,16 +762,23 @@ export function App() {
       }
       setDeals(payload.deals);
       const liveByCity = new Map(payload.deals.map((deal) => [searchableText(deal.city), deal]));
+      const latestFor = (entry) => {
+        const liveDeal = isLiveDeal(entry) && liveByCity.get(searchableText(entry.city));
+        return liveDeal ? sameTripFare(entry, liveDeal) : null;
+      };
       const priceMoves = savedDeals
-        .filter(isLiveDeal)
-        .map((entry) => ({ entry, match: liveByCity.get(searchableText(entry.city)) }))
-        .filter(({ match }) => match)
-        .map(({ entry, match }) => match.price - (entry.savedPrice ?? entry.price));
+        .map((entry) => ({ entry, fare: latestFor(entry) }))
+        .filter(({ fare }) => fare)
+        .map(({ entry, fare }) => fare.price - (entry.savedPrice ?? entry.price));
       if (priceMoves.length) {
         const checkedAt = new Date().toISOString();
         setSavedDeals((current) => current.map((entry) => {
-          const match = isLiveDeal(entry) && liveByCity.get(searchableText(entry.city));
-          return match ? { ...entry, savedPrice: entry.savedPrice ?? entry.price, latestPrice: match.price, latestDate: match.date, priceCheckedAt: checkedAt } : entry;
+          const fare = latestFor(entry);
+          return fare ? {
+            ...entry,
+            savedPrice: entry.savedPrice ?? entry.price,
+            latest: { price: fare.price, link: fare.link || null, airline: fare.airline, airlineCode: fare.airlineCode, originOptions: fare.options, checkedAt },
+          } : entry;
         }));
       }
       const drops = priceMoves.filter((change) => change < 0).length;
@@ -863,13 +911,16 @@ export function App() {
   const penangPoint = projectLocation(HOME_AIRPORTS.PEN.lat, HOME_AIRPORTS.PEN.lon);
   const klPoint = projectLocation(HOME_AIRPORTS.KUL.lat, HOME_AIRPORTS.KUL.lon);
   const homePoints = { PEN: penangPoint, KUL: klPoint };
-  const mappedDeals = filtered.filter((deal) => Number.isFinite(deal.lat) && Number.isFinite(deal.lon));
-  const focusId = hoveredId ?? selected?.id ?? null;
+  const mappedDeals = useMemo(() => filtered.filter((deal) => Number.isFinite(deal.lat) && Number.isFinite(deal.lon)), [filtered]);
+  // A hovered card or pin can unmount without a mouseleave (e.g. unsaving in the saved
+  // view), so only treat a hover as focus while that deal is still shown.
+  const hoveredVisible = hoveredId !== null && filtered.some((deal) => deal.id === hoveredId);
+  const focusId = (hoveredVisible ? hoveredId : null) ?? selected?.id ?? null;
   const toScreen = (point) => ({
     x: mapSize.width / 2 + (point.x - mapSize.width / 2) * mapZoom + mapPan.x,
     y: mapSize.height / 2 + (point.y - mapSize.height / 2) * mapZoom + mapPan.y,
   });
-  const labelSides = (() => {
+  const labelSides = useMemo(() => {
     const sides = new Map();
     // Home-airport badges sit up-left of PEN and down-left of KUL; keep labels off them.
     const pen = toScreen(penangPoint);
@@ -902,8 +953,10 @@ export function App() {
       }
     }
     return sides;
-  })();
-  const flightArcs = mapSize.width ? mappedDeals.flatMap((deal) => {
+    // projectLocation/toScreen only depend on mapSize, mapZoom, and mapPan.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mappedDeals, mapSize, mapZoom, mapPan, focusId]);
+  const flightArcs = useMemo(() => mapSize.width ? mappedDeals.flatMap((deal) => {
     const to = projectLocation(deal.lat, deal.lon);
     return (deal.origins || [deal.origin]).filter((code) => homePoints[code]).map((code) => ({
       key: `${deal.id}-${code}`,
@@ -911,7 +964,9 @@ export function App() {
       origin: code.toLowerCase(),
       d: arcPath(homePoints[code], to),
     }));
-  }) : [];
+    // homePoints/projectLocation only depend on mapSize.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }) : [], [mappedDeals, mapSize]);
 
   return (
     <main className="app-shell">

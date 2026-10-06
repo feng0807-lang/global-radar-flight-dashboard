@@ -345,3 +345,4 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
 .export-button:disabled { opacity: .45; cursor: default; }
 .export-button .material-symbols-rounded { font-size: 15px; }
 @media (max-width: 520px) { .export-button span { display: none; } }
+.spread-slot[aria-disabled="true"] { cursor: default; }

@@ -66,11 +66,6 @@ const ROUTE_HUBS = [
   { id: "IST", name: "Istanbul (IST)", lat: 41.0082, lon: 28.9784 },
 ];
 
-// Short-lived in-memory cache so repeated route scans (and shared legs across
-// origins/hubs) do not re-spend SerpApi quota within a session.
-const LEG_CACHE_TTL_MS = 10 * 60 * 1000;
-const legCache = new Map();
-
 // Successful SerpApi payloads are cached by request (minus the key) so refreshing,
 // toggling filters, or re-running a search does not re-spend the monthly quota.
 const SERPAPI_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -292,19 +287,13 @@ async function fetchPointToPoint(departureId, arrivalId, outboundDate, returnDat
 }
 
 // Price one round-trip leg (departure → arrival) and return the cheapest offer.
-// Results are cached by leg + dates + stops so shared legs are only fetched once.
+// Repeat lookups of the same leg are served by the shared SerpApi response cache.
 async function priceLeg(departureId, arrival, outboundDate, returnDate, stops) {
-  const cacheKey = `${departureId}>${arrival.id}|${outboundDate}|${returnDate}|${stops || "any"}`;
-  const cached = legCache.get(cacheKey);
-  if (cached && Date.now() - cached.at < LEG_CACHE_TTL_MS) return cached.value;
-
   const offers = await fetchPointToPoint(departureId, arrival.id, outboundDate, returnDate, stops);
   const cheapest = offers.sort((a, b) => a.price - b.price)[0] || null;
-  const value = cheapest
+  return cheapest
     ? { price: cheapest.price, airline: cheapest.airline, airlineCode: cheapest.airlineCode, stops: cheapest.stops, date: `${outboundDate} – ${returnDate}`, link: googleFlightsUrl(departureId, arrival.id, outboundDate, returnDate), available: true }
     : { available: false };
-  legCache.set(cacheKey, { at: Date.now(), value });
-  return value;
 }
 
 // Find the cheapest way to reach a destination: compare direct round trips from
