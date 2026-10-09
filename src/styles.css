@@ -572,3 +572,30 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
   .fs-tracked-check { grid-column: 1; justify-self: start; }
   .fs-tracked-remove { grid-column: 2; grid-row: 1; }
 }
+
+/* Departure airport chips */
+.fs-origins { flex: 2 1 260px !important; }
+.fs-origins > span small { text-transform: none; letter-spacing: 0; font-weight: 600; }
+.fs-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding-top: 4px; }
+.fs-chip { display: inline-flex; align-items: center; gap: 2px; padding: 3px 4px 3px 9px; border-radius: 999px; background: rgba(35, 201, 213, .14); color: #eef4ff; font-size: 12px; font-weight: 700; }
+.fs-chip button { width: 20px; height: 20px; border: 0; border-radius: 50%; background: transparent; color: var(--muted); display: grid; place-items: center; padding: 0; }
+.fs-chip button:disabled { visibility: hidden; }
+.fs-chip button .material-symbols-rounded { font-size: 14px; }
+.fs-chip-add { border: 1px dashed var(--line); border-radius: 999px; background: transparent; color: var(--teal); padding: 3px 9px; font-size: 11px; font-weight: 700; }
+.fs-origins input { flex: 1 1 90px; min-width: 90px; padding: 3px 0; font-size: 13px; }
+
+/* Saved filter sets */
+.fs-presets { margin-top: 10px; display: grid; gap: 8px; }
+.fs-preset-list { display: flex; flex-wrap: wrap; gap: 5px; }
+.fs-preset { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; background: #111c35; }
+.fs-preset.active { border-color: var(--teal); background: rgba(35, 201, 213, .14); }
+.fs-preset button { border: 0; background: transparent; color: #dce5f8; padding: 5px 4px 5px 10px; font-size: 11px; font-weight: 700; }
+.fs-preset .fs-preset-delete { padding: 4px 6px 4px 2px; color: var(--muted); display: grid; place-items: center; }
+.fs-preset-delete .material-symbols-rounded { font-size: 13px; }
+.fs-preset-save { justify-self: start; display: inline-flex; align-items: center; gap: 4px; border: 0; background: transparent; color: var(--teal); padding: 0; font-size: 11px; font-weight: 700; }
+.fs-preset-save:disabled { color: var(--muted); opacity: .6; cursor: default; }
+.fs-preset-save .material-symbols-rounded { font-size: 15px; }
+.fs-preset-form { display: flex; gap: 5px; }
+.fs-preset-form input { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; background: #111c35; color: #eef4ff; padding: 6px 8px; font-size: 12px; }
+.fs-preset-form button { border: 0; border-radius: 8px; background: var(--teal); color: #071226; padding: 6px 10px; font-size: 11px; font-weight: 800; }
+.fs-preset-form button:disabled { opacity: .5; }

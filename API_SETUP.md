@@ -21,7 +21,7 @@ Keep the key private. Do not add it to frontend HTML or commit it to source cont
 - **API offline** means `START_DASHBOARD.cmd` needs to be run again.
 - **Unrecognised host** means the dashboard was opened under a name other than `127.0.0.1` or `localhost`. Use `http://127.0.0.1:4174`, or add the name to `ALLOWED_HOSTS` in `.env` (for example `ALLOWED_HOSTS=radar.lan:4174`).
 - Check `http://127.0.0.1:4174/api/status` to confirm the local API connection without exposing the key.
-- **Search flights** uses one search per departure airport (two when searching from both Penang and KL), plus one more when you pick an outbound flight to see returns. **Compare nearby dates** uses one search per date per departure airport (the button shows the total, e.g. ±1 day from both airports = 4). Filters and sorting never use extra searches, and repeating the same search within 10 minutes is served from cache.
+- **Search flights** uses one search per departure airport (two for Penang + KL, up to three if you add another airport), plus one more when you pick an outbound flight to see returns. **Compare nearby dates** uses one search per date per departure airport (the button shows the total, e.g. ±1 day from both airports = 4). Filters and sorting never use extra searches, and repeating the same search within 10 minutes is served from cache.
 - SerpApi's free plan has a monthly search limit. Searching both airports or several trip-duration groups uses multiple searches.
 
 ## Weather Filter

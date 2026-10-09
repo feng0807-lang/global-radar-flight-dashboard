@@ -19,7 +19,18 @@ import {
 } from "../flightFilters.js";
 
 const CABINS = [["1", "Economy"], ["2", "Premium economy"], ["3", "Business"], ["4", "First"]];
-const ORIGINS = [["ALL", "Penang + KL"], ["PEN", "Penang (PEN)"], ["KUL", "Kuala Lumpur (KUL)"]];
+const HOME_NAMES = { PEN: "Penang", KUL: "Kuala Lumpur" };
+const MAX_ORIGINS = 3; // each departure airport costs one search
+
+// form.from is "ALL" (Penang + KL) or a comma list such as "PEN,KUL,SIN".
+export function originList(from) {
+  return from === "ALL" ? ["PEN", "KUL"] : String(from || "").split(",").filter(Boolean);
+}
+export function joinOrigins(list) {
+  const unique = [...new Set(list)];
+  return unique.length === 2 && unique.includes("PEN") && unique.includes("KUL") ? "ALL" : unique.join(",");
+}
+const isValidFrom = (value) => typeof value === "string" && /^(ALL|[A-Z]{3}(,[A-Z]{3}){0,2})$/.test(value);
 const TIGHT_CONNECTION = 60;
 
 function isoInDays(days) {
@@ -43,7 +54,7 @@ const DEFAULT_FORM = {
 
 // Saved forms drop past dates and anything malformed.
 function validForm(value) {
-  return value && typeof value === "object" && ["ALL", "PEN", "KUL"].includes(value.from)
+  return value && typeof value === "object" && isValidFrom(value.from)
     && (value.depart === "" || (isIsoDate(value.depart) && daysFromToday(value.depart) >= 0));
 }
 
@@ -87,7 +98,7 @@ function formFromLink() {
   };
   const form = {
     ...DEFAULT_FORM,
-    from: ["ALL", "PEN", "KUL"].includes(params.get("from")) ? params.get("from") : "ALL",
+    from: isValidFrom(params.get("from")) ? params.get("from") : "ALL",
     to: { id: params.get("to"), name: (params.get("toName") || params.get("to")).slice(0, 120), description: "" },
     trip: params.get("trip") === "oneway" ? "oneway" : "round",
     depart: isIsoDate(params.get("depart") || "") && daysFromToday(params.get("depart")) >= 0 ? params.get("depart") : "",
@@ -104,17 +115,13 @@ function formFromLink() {
 }
 const LINKED_FORM = formFromLink();
 
-function AirportField({ label, value, onChange }) {
-  const [text, setText] = useState(value?.name || "");
+// Debounced airport autocomplete via the local API.
+function useAirportSuggestions(text, skipTerm = "") {
   const [suggestions, setSuggestions] = useState([]);
-  const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => { setText(value?.name || ""); }, [value?.name]);
-
   useEffect(() => {
     const term = text.trim();
-    if (term.length < 2 || term === value?.name || window.location.protocol === "file:") {
+    if (term.length < 2 || term === skipTerm || window.location.protocol === "file:") {
       setSuggestions([]);
       return undefined;
     }
@@ -137,7 +144,16 @@ function AirportField({ label, value, onChange }) {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [text, value?.name]);
+  }, [text, skipTerm]);
+  return { suggestions, loading };
+}
+
+function AirportField({ label, value, onChange }) {
+  const [text, setText] = useState(value?.name || "");
+  const [open, setOpen] = useState(false);
+  const { suggestions, loading } = useAirportSuggestions(text, value?.name);
+
+  useEffect(() => { setText(value?.name || ""); }, [value?.name]);
 
   // A typed 3-letter code works without picking a suggestion.
   const commitTyped = () => {
@@ -169,6 +185,67 @@ function AirportField({ label, value, onChange }) {
               <b>{airport.id}</b>
             </button>
           )) : <p>{/^[a-z]{3}$/i.test(text.trim()) ? `Press Search to use airport code ${text.trim().toUpperCase()}.` : "No airports found. Try a city or 3-letter code."}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Departure airports as removable chips: Penang and KL one tap away, any other
+// airport via search. Up to three, since each one costs a search.
+function OriginPicker({ value, onChange }) {
+  const origins = originList(value);
+  const [text, setText] = useState("");
+  const [open, setOpen] = useState(false);
+  const { suggestions, loading } = useAirportSuggestions(text);
+  const update = (list) => onChange(joinOrigins(list));
+  const add = (code) => {
+    if (/^[A-Z]{3}$/.test(code) && !origins.includes(code) && origins.length < MAX_ORIGINS) update([...origins, code]);
+    setText("");
+    setOpen(false);
+  };
+  const full = origins.length >= MAX_ORIGINS;
+  return (
+    <div className="fs-field fs-origins" role="group" aria-label="Departure airports">
+      <span>From <small>· up to {MAX_ORIGINS}, 1 search each</small></span>
+      <div className="fs-chips">
+        {origins.map((code) => (
+          <span className="fs-chip" key={code}>
+            {HOME_NAMES[code] ? `${HOME_NAMES[code]} (${code})` : code}
+            <button type="button" onClick={() => update(origins.filter((item) => item !== code))} disabled={origins.length === 1} aria-label={`Remove ${code}`}><Icon>close</Icon></button>
+          </span>
+        ))}
+        {!full && Object.keys(HOME_NAMES).filter((code) => !origins.includes(code)).map((code) => (
+          <button type="button" className="fs-chip-add" key={code} onClick={() => add(code)}>+ {code}</button>
+        ))}
+        {!full && <input
+          value={text}
+          placeholder="+ Add airport"
+          aria-label="Add a departure airport"
+          autoComplete="off"
+          onFocus={() => setOpen(true)}
+          onBlur={() => window.setTimeout(() => setOpen(false), 150)}
+          onChange={(event) => { setText(event.target.value); setOpen(true); }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              const code = text.trim().toUpperCase();
+              if (/^[A-Z]{3}$/.test(code)) add(code);
+              else if (suggestions[0]) add(suggestions[0].id);
+            }
+          }}
+        />}
+      </div>
+      {open && text.trim().length >= 2 && (suggestions.length > 0 || !loading) && (
+        <div className="location-suggestions fs-suggestions" role="listbox">
+          {suggestions.filter((airport) => !origins.includes(airport.id)).map((airport) => (
+            <button type="button" role="option" aria-selected="false" key={airport.id} onMouseDown={(event) => event.preventDefault()} onClick={() => add(airport.id)}>
+              <Icon>flight_takeoff</Icon>
+              <span><strong>{airport.name}</strong><small>{airport.description}</small></span>
+              <b>{airport.id}</b>
+            </button>
+          ))}
+          {!suggestions.length && <p>{/^[a-z]{3}$/i.test(text.trim()) ? `Press Enter to add ${text.trim().toUpperCase()}.` : "No airports found. Try a city or 3-letter code."}</p>}
         </div>
       )}
     </div>
@@ -220,11 +297,7 @@ function SearchBar({ form, setForm, onSearch, loading }) {
         </label>
       </div>
       <div className="fs-row fs-row-main">
-        <label className="fs-field"><span>From</span>
-          <select value={form.from} onChange={(event) => update({ from: event.target.value })} aria-label="From">
-            {ORIGINS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
-        </label>
+        <OriginPicker value={form.from} onChange={(from) => update({ from })} />
         <AirportField label="To" value={form.to} onChange={(to) => update({ to })} />
         <label className="fs-field"><span>Departure</span>
           <input type="date" aria-label="Departure" min={today} value={form.depart} onChange={(event) => update({ depart: event.target.value, return: form.return && form.return < event.target.value ? "" : form.return })} />
@@ -258,7 +331,47 @@ function toggleIn(list, value) {
   return list.includes(value) ? list.filter((item) => item !== value) : [...list, value];
 }
 
-function FlightFilters({ filters, setFilters, facets, total, shown, mobile = false, close }) {
+const MAX_PRESETS = 8;
+const sameFilters = (a, b) => JSON.stringify({ ...DEFAULT_FLIGHT_FILTERS, ...a }) === JSON.stringify({ ...DEFAULT_FLIGHT_FILTERS, ...b });
+
+// Named filter sets ("Comfortable: nonstop, 32 in+") saved in the browser and
+// re-applied to any search with one click.
+function FilterPresets({ filters, setFilters, presets, setPresets, active }) {
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState("");
+  const save = () => {
+    const trimmed = name.trim().slice(0, 30);
+    if (!trimmed) return;
+    setPresets((list) => [{ name: trimmed, filters }, ...list.filter((preset) => preset.name !== trimmed)].slice(0, MAX_PRESETS));
+    setName("");
+    setNaming(false);
+  };
+  return (
+    <div className="fs-presets">
+      {presets.length > 0 && <div className="fs-preset-list" role="group" aria-label="Saved filter sets">
+        {presets.map((preset) => {
+          const applied = sameFilters(filters, preset.filters);
+          return (
+            <span className={`fs-preset ${applied ? "active" : ""}`} key={preset.name}>
+              <button type="button" aria-pressed={applied} onClick={() => setFilters({ ...DEFAULT_FLIGHT_FILTERS, ...preset.filters })}>{preset.name}</button>
+              <button type="button" className="fs-preset-delete" aria-label={`Delete filter set ${preset.name}`} onClick={() => setPresets((list) => list.filter((item) => item.name !== preset.name))}><Icon>close</Icon></button>
+            </span>
+          );
+        })}
+      </div>}
+      {naming ? (
+        <form className="fs-preset-form" onSubmit={(event) => { event.preventDefault(); save(); }}>
+          <input autoFocus value={name} maxLength={30} placeholder="Name, e.g. Comfortable" aria-label="Filter set name" onChange={(event) => setName(event.target.value)} onKeyDown={(event) => event.key === "Escape" && (event.stopPropagation(), setNaming(false))} />
+          <button type="submit" disabled={!name.trim()}>Save</button>
+        </form>
+      ) : (
+        <button type="button" className="fs-preset-save" disabled={!active} onClick={() => setNaming(true)} title={active ? "Save these filters for later searches" : "Set some filters first"}><Icon>bookmark_add</Icon>Save current filters…</button>
+      )}
+    </div>
+  );
+}
+
+function FlightFilters({ filters, setFilters, facets, total, shown, presets, setPresets, mobile = false, close }) {
   const update = (patch) => setFilters((current) => ({ ...current, ...patch }));
   const active = activeFilterCount(filters);
   const money = (value) => (value === null || value === undefined || !Number.isFinite(value) ? "—" : `MYR ${Math.round(value).toLocaleString()}`);
@@ -269,6 +382,7 @@ function FlightFilters({ filters, setFilters, facets, total, shown, mobile = fal
         <h2>FILTERS</h2>
         <p>{shown} of {total} flights</p>
         <button type="button" className="fs-clear" disabled={!active} onClick={() => setFilters(DEFAULT_FLIGHT_FILTERS)}>Clear filters{active ? ` (${active})` : ""}</button>
+        <FilterPresets filters={filters} setFilters={setFilters} presets={presets} setPresets={setPresets} active={active} />
       </div>
 
       <div className="filter-section">
@@ -286,7 +400,7 @@ function FlightFilters({ filters, setFilters, facets, total, shown, mobile = fal
         {facets.origins.map((origin) => (
           <label className="check-row fs-priced" key={origin.code}>
             <input type="checkbox" checked={!filters.excludedOrigins.includes(origin.code)} onChange={() => update({ excludedOrigins: toggleIn(filters.excludedOrigins, origin.code) })} />
-            <span>{origin.code === "PEN" ? "Penang (PEN)" : origin.code === "KUL" ? "Kuala Lumpur (KUL)" : origin.code}</span><small>{money(origin.minPrice)}</small>
+            <span>{HOME_NAMES[origin.code] ? `${HOME_NAMES[origin.code]} (${origin.code})` : origin.code}</span><small>{money(origin.minPrice)}</small>
           </label>
         ))}
       </div>}
@@ -466,7 +580,7 @@ function trackKey(form) {
 }
 function describeSearch(form) {
   const fmt = (iso) => new Date(`${iso}T00:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" });
-  const from = form.from === "ALL" ? "PEN/KUL" : form.from;
+  const from = originList(form.from).join("/");
   const travellers = form.adults + form.children + form.infants;
   const cabin = CABINS.find(([value]) => value === form.cabin)?.[1] || "Economy";
   return {
@@ -501,7 +615,7 @@ function TrackedRoutes({ tracked, onCheck, onRemove, busy, collapsed = false }) 
                   {` · ${ago(item.lastChecked)}`}
                 </small>
               </span>
-              {!expired && <button type="button" className="fs-tracked-check" onClick={() => onCheck(item)} disabled={busy}><Icon>refresh</Icon>Check price <small>({item.form.from === "ALL" ? 2 : 1})</small></button>}
+              {!expired && <button type="button" className="fs-tracked-check" onClick={() => onCheck(item)} disabled={busy}><Icon>refresh</Icon>Check price <small>({originList(item.form.from).length})</small></button>}
               <button type="button" className="fs-tracked-remove" onClick={() => onRemove(item)} aria-label={`Stop tracking ${route}`}><Icon>close</Icon></button>
             </li>
           );
@@ -577,6 +691,7 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
   const [nearby, setNearby] = useState(null);
   const [nearbyLoading, setNearbyLoading] = useState(false);
   const [tracked, setTracked] = usePersistentState("trackedRoutes", [], undefined, Array.isArray);
+  const [presets, setPresets] = usePersistentState("flightFilterPresets", [], undefined, (value) => Array.isArray(value) && value.every((preset) => preset && typeof preset.name === "string" && preset.filters && typeof preset.filters === "object"));
 
   const flights = useMemo(() => results?.flights || [], [results]);
   const facets = useMemo(() => flightFacets(flights), [flights]);
@@ -732,7 +847,7 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
 
   const insights = results ? Object.values(results.byOrigin || {}).find((entry) => entry.priceInsights)?.priceInsights : null;
   const bookingUrlFor = (flight) => results?.byOrigin?.[flight.origin]?.googleFlightsUrl || "";
-  const filterProps = { filters, setFilters, facets, total: flights.length, shown: shown.length };
+  const filterProps = { filters, setFilters, facets, total: flights.length, shown: shown.length, presets, setPresets };
 
   return (
     <>
@@ -770,7 +885,7 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
           {mode !== "round-return" && searched && <NearbyDates
             nearby={nearby}
             loading={nearbyLoading}
-            searchesPerDate={searched.from === "ALL" ? 2 : 1}
+            searchesPerDate={originList(searched.from).length}
             onCompare={compareNearby}
             onPick={pickNearby}
             roundTrip={searched.trip === "round"}

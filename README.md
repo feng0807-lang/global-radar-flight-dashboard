@@ -6,7 +6,7 @@ A modern flight-discovery dashboard for finding affordable worldwide trips from 
 
 ### Search flights (Google Flights-style)
 
-Switch to **Search flights** for a route search like Google Flights: from Penang, Kuala Lumpur, or both; any destination airport; round trip or one way; dates; adults, children, and lap infants; cabin class; and carry-on bags. Results show times, duration, stops and layovers, emissions, and price, with full leg-by-leg details. For round trips, pick an outbound flight, then choose its return and book on Google Flights.
+Switch to **Search flights** for a route search like Google Flights: from Penang, Kuala Lumpur, or up to three departure airports of your choice (for example adding Singapore or Johor Bahru, often cheaper for long-haul); any destination airport; round trip or one way; dates; adults, children, and lap infants; cabin class; and carry-on bags. Results show times, duration, stops and layovers, emissions, and price, with full leg-by-leg details. For round trips, pick an outbound flight, then choose its return and book on Google Flights.
 
 Filters go further than Google Flights and apply instantly without spending extra searches:
 
@@ -18,6 +18,7 @@ Filters go further than Google Flights and apply instantly without spending extr
 - Sort by best, cheapest, fastest, earliest or latest departure, earliest arrival, or lowest emissions; price insight shows whether fares are low, typical, or high for the route
 - Price history chart for the route (from Google Flights price insights, no extra searches), with the typical price range marked
 - Compare nearby dates (±1 or ±3 days, same trip length) to find the cheapest day; the button shows how many searches it will use, and switching to a compared date is served from cache
+- Saved filter sets: name the current filters (for example "Comfortable") and re-apply them to any search with one click
 - Tracked routes: track a search to watch its price; every later search of that route records the cheapest fare for free, and the list shows the change since you started tracking, with a one-click "Check price"
 - Shareable flight searches: the address bar carries the route, dates, travellers, cabin, and bags, and a shared link opens straight onto its results
 
