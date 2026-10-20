@@ -25,6 +25,12 @@ export const DEFAULT_FLIGHT_FILTERS = {
   avoidRedEye: false,
   hideOftenDelayed: false,
   lowerEmissionsOnly: false,
+  // Comfort: every leg must qualify. Flights without legroom data fail a legroom minimum.
+  minLegroom: null, // inches
+  requireWifi: false,
+  requirePower: false,
+  requireVideo: false,
+  excludedAircraft: [],
 };
 
 const inWindow = (minutes, [start, end]) => minutes === null || (minutes >= start && minutes <= end);
@@ -45,6 +51,11 @@ export function flightMatches(flight, filters) {
   if (f.avoidRedEye && isRedEye(flight)) return false;
   if (f.hideOftenDelayed && flight.oftenDelayed) return false;
   if (f.lowerEmissionsOnly && !(flight.emissionsDiffPercent !== null && flight.emissionsDiffPercent < 0)) return false;
+  if (f.minLegroom !== null && (flight.minLegroom === null || flight.minLegroom < f.minLegroom)) return false;
+  if (f.requireWifi && !flight.wifiAllLegs) return false;
+  if (f.requirePower && !flight.powerAllLegs) return false;
+  if (f.requireVideo && !flight.videoAllLegs) return false;
+  if ((flight.aircraft || []).some((family) => f.excludedAircraft.includes(family))) return false;
   return true;
 }
 
@@ -85,6 +96,15 @@ export function flightFacets(flights) {
     origin.minPrice = Math.min(origin.minPrice, flight.price);
     origins.set(flight.origin, origin);
   }
+  const aircraft = new Map();
+  for (const flight of flights) {
+    for (const family of flight.aircraft || []) {
+      const entry = aircraft.get(family) || { name: family, count: 0, minPrice: Infinity };
+      entry.count += 1;
+      entry.minPrice = Math.min(entry.minPrice, flight.price);
+      aircraft.set(family, entry);
+    }
+  }
   const range = (values) => (values.length ? [Math.min(...values), Math.max(...values)] : [0, 0]);
   const minByStops = (stops) => {
     const prices = flights.filter((flight) => flight.stops <= stops).map((flight) => flight.price);
@@ -98,6 +118,13 @@ export function flightFacets(flights) {
     duration: range(flights.map((flight) => flight.totalDuration)),
     layover: range(flights.flatMap((flight) => flight.layovers.map((layover) => layover.duration))),
     cheapestByStops: { 0: minByStops(0), 1: minByStops(1), 2: minByStops(2), any: minByStops(Infinity) },
+    aircraft: [...aircraft.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)),
+    legroom: range(flights.map((flight) => flight.minLegroom).filter((value) => value !== null)),
+    amenities: {
+      wifi: flights.filter((flight) => flight.wifiAllLegs).length,
+      power: flights.filter((flight) => flight.powerAllLegs).length,
+      video: flights.filter((flight) => flight.videoAllLegs).length,
+    },
   };
 }
 
@@ -119,6 +146,11 @@ export function activeFilterCount(filters) {
     f.avoidRedEye,
     f.hideOftenDelayed,
     f.lowerEmissionsOnly,
+    f.minLegroom !== null,
+    f.requireWifi,
+    f.requirePower,
+    f.requireVideo,
+    f.excludedAircraft.length > 0,
   ].filter(Boolean).length;
 }
 

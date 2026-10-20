@@ -86,3 +86,21 @@ test("activeFilterCount and formatting helpers", () => {
   assert.equal(formatClock(390), "06:30");
   assert.equal(formatClock(1440), "23:59");
 });
+
+test("comfort filters: legroom, amenities, and aircraft (every leg must qualify)", () => {
+  const roomy = run({ minLegroom: 32 });
+  assert.ok(roomy.length > 0 && roomy.every((flight) => flight.minLegroom >= 32));
+  assert.ok(!roomy.some((flight) => flight.airlines.includes("Thai AirAsia")), "a 28 in leg fails the whole itinerary");
+  const wifi = run({ requireWifi: true });
+  assert.ok(wifi.every((flight) => flight.legs.every((leg) => leg.wifi)));
+  assert.ok(!wifi.some((flight) => flight.airlines.includes("Thai AirAsia")));
+  assert.ok(run({ requirePower: true, requireVideo: true }).every((flight) => flight.powerAllLegs && flight.videoAllLegs));
+  const no787 = run({ excludedAircraft: ["Boeing 787"] });
+  assert.ok(no787.length > 0 && no787.every((flight) => !flight.aircraft.includes("Boeing 787")));
+  const facets = flightFacets(flights);
+  // Per journey the tightest leg counts: EVA Air's 33 in leg flies with 28 in Thai AirAsia legs.
+  assert.deepEqual(facets.legroom, [28, 32]);
+  assert.ok(facets.aircraft.some((entry) => entry.name === "Airbus A330"));
+  assert.ok(facets.amenities.wifi > 0 && facets.amenities.wifi < flights.length);
+  assert.equal(activeFilterCount({ minLegroom: 31, requireWifi: true, excludedAircraft: ["Boeing 787"] }), 3);
+});
