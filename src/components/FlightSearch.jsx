@@ -42,9 +42,11 @@ function isoInDays(days) {
 const DEFAULT_FORM = {
   from: "ALL",
   to: null, // { id, name, description }
-  trip: "round",
+  trip: "round", // "round" | "oneway" | "multi"
   depart: "",
   return: "",
+  // Multi-city flights: [{ from: airport|null, to: airport|null, date }]
+  segments: [{ from: { id: "KUL", name: "KUL – Kuala Lumpur", description: "" }, to: null, date: "" }, { from: null, to: null, date: "" }],
   adults: 1,
   children: 0,
   infants: 0,
@@ -52,10 +54,18 @@ const DEFAULT_FORM = {
   bags: 0,
 };
 
+export const MAX_SEGMENTS = 5;
+const isAirport = (value) => value && typeof value === "object" && /^[A-Z]{3}$/.test(value.id || "");
+const segmentComplete = (segment) => isAirport(segment.from) && isAirport(segment.to) && isIsoDate(segment.date || "");
+export function segmentsParam(segments) {
+  return segments.map((segment) => `${segment.from?.id}:${segment.to?.id}:${segment.date}`).join(",");
+}
+
 // Saved forms drop past dates and anything malformed.
 function validForm(value) {
   return value && typeof value === "object" && isValidFrom(value.from)
-    && (value.depart === "" || (isIsoDate(value.depart) && daysFromToday(value.depart) >= 0));
+    && (value.depart === "" || (isIsoDate(value.depart) && daysFromToday(value.depart) >= 0))
+    && (value.segments === undefined || (Array.isArray(value.segments) && value.segments.length >= 2 && value.segments.length <= MAX_SEGMENTS));
 }
 
 function addDays(iso, days) {
@@ -66,6 +76,17 @@ function addDays(iso, days) {
 
 // Query string for /api/flights/search and for shareable links (shared links add view=flights).
 export function flightQuery(form) {
+  if (form.trip === "multi") {
+    return new URLSearchParams({
+      trip: "multi",
+      segments: segmentsParam(form.segments),
+      adults: String(form.adults),
+      children: String(form.children),
+      infants: String(form.infants),
+      cabin: form.cabin,
+      bags: String(form.bags),
+    });
+  }
   const params = new URLSearchParams({
     from: form.from,
     to: form.to?.id || "",
@@ -91,11 +112,28 @@ function formFromLink() {
   } catch {
     return undefined;
   }
-  if (params.get("view") !== "flights" || !/^[A-Z]{3}$/.test(params.get("to") || "")) return undefined;
+  if (params.get("view") !== "flights") return undefined;
   const int = (name, fallback, min, max) => {
     const value = Number(params.get(name) ?? fallback);
     return Number.isInteger(value) && value >= min && value <= max ? value : fallback;
   };
+  const passengers = {
+    adults: int("adults", 1, 1, 9),
+    children: int("children", 0, 0, 8),
+    infants: int("infants", 0, 0, 4),
+    cabin: ["1", "2", "3", "4"].includes(params.get("cabin")) ? params.get("cabin") : "1",
+    bags: int("bags", 0, 0, 2),
+  };
+  if (params.get("trip") === "multi") {
+    const code = (value) => (/^[A-Z]{3}$/.test(value || "") ? { id: value, name: value, description: "" } : null);
+    const segments = String(params.get("segments") || "").split(",").slice(0, MAX_SEGMENTS).map((part) => {
+      const [from, to, date] = part.split(":");
+      return { from: code(from), to: code(to), date: isIsoDate(date || "") && daysFromToday(date) >= 0 ? date : "" };
+    });
+    if (segments.length < 2) return undefined;
+    return { ...DEFAULT_FORM, ...passengers, infants: Math.min(passengers.infants, passengers.adults), trip: "multi", segments };
+  }
+  if (!/^[A-Z]{3}$/.test(params.get("to") || "")) return undefined;
   const form = {
     ...DEFAULT_FORM,
     from: isValidFrom(params.get("from")) ? params.get("from") : "ALL",
@@ -103,11 +141,7 @@ function formFromLink() {
     trip: params.get("trip") === "oneway" ? "oneway" : "round",
     depart: isIsoDate(params.get("depart") || "") && daysFromToday(params.get("depart")) >= 0 ? params.get("depart") : "",
     return: isIsoDate(params.get("return") || "") ? params.get("return") : "",
-    adults: int("adults", 1, 1, 9),
-    children: int("children", 0, 0, 8),
-    infants: int("infants", 0, 0, 4),
-    cabin: ["1", "2", "3", "4"].includes(params.get("cabin")) ? params.get("cabin") : "1",
-    bags: int("bags", 0, 0, 2),
+    ...passengers,
   };
   if (form.infants > form.adults) form.infants = form.adults;
   if (form.return && form.return < form.depart) form.return = "";
@@ -263,6 +297,32 @@ function Stepper({ label, hint, value, min, max, onChange }) {
   );
 }
 
+// Multi-city itinerary rows: from, to, and date per flight (2–5 flights).
+function SegmentsEditor({ segments, onChange }) {
+  const today = isoInDays(0);
+  const set = (index, patch) => onChange(segments.map((segment, i) => (i === index ? { ...segment, ...patch } : segment)));
+  const add = () => {
+    const last = segments[segments.length - 1];
+    onChange([...segments, { from: last?.to || null, to: null, date: "" }]);
+  };
+  return (
+    <div className="fs-segments">
+      {segments.map((segment, index) => (
+        <div className="fs-row fs-row-main fs-segment" key={index} role="group" aria-label={`Flight ${index + 1}`}>
+          <span className="fs-segment-number" aria-hidden="true">{index + 1}</span>
+          <AirportField label={`Flight ${index + 1} from`} value={segment.from} onChange={(from) => set(index, { from })} />
+          <AirportField label={`Flight ${index + 1} to`} value={segment.to} onChange={(to) => set(index, { to })} />
+          <label className="fs-field"><span>Date</span>
+            <input type="date" aria-label={`Flight ${index + 1} date`} min={segments[index - 1]?.date || today} value={segment.date} onChange={(event) => set(index, { date: event.target.value })} />
+          </label>
+          <button type="button" className="fs-segment-remove" onClick={() => onChange(segments.filter((_, i) => i !== index))} disabled={segments.length <= 2} aria-label={`Remove flight ${index + 1}`}><Icon>close</Icon></button>
+        </div>
+      ))}
+      {segments.length < MAX_SEGMENTS && <button type="button" className="fs-chip-add fs-segment-add" onClick={add}>+ Add flight</button>}
+    </div>
+  );
+}
+
 function SearchBar({ form, setForm, onSearch, loading }) {
   const update = (patch) => setForm((current) => ({ ...current, ...patch }));
   const travellers = form.adults + form.children + form.infants;
@@ -271,7 +331,7 @@ function SearchBar({ form, setForm, onSearch, loading }) {
     <form className="fs-searchbar" onSubmit={(event) => { event.preventDefault(); onSearch(); }}>
       <div className="fs-row fs-row-options">
         <div className="fs-segmented" role="group" aria-label="Trip type">
-          {[["round", "Round trip"], ["oneway", "One way"]].map(([value, label]) => (
+          {[["round", "Round trip"], ["oneway", "One way"], ["multi", "Multi-city"]].map(([value, label]) => (
             <button type="button" key={value} className={form.trip === value ? "active" : ""} aria-pressed={form.trip === value} onClick={() => update({ trip: value })}>{label}</button>
           ))}
         </div>
@@ -296,7 +356,15 @@ function SearchBar({ form, setForm, onSearch, loading }) {
           </select>
         </label>
       </div>
-      <div className="fs-row fs-row-main">
+      {form.trip === "multi" ? (
+        <div className="fs-row fs-row-multi">
+          <SegmentsEditor segments={form.segments || DEFAULT_FORM.segments} onChange={(segments) => update({ segments })} />
+          <button className="fs-search-button" type="submit" disabled={loading}>
+            <Icon className={loading ? "spin" : ""}>{loading ? "progress_activity" : "search"}</Icon>
+            <span>{loading ? "Searching…" : "Search"}</span>
+          </button>
+        </div>
+      ) : <div className="fs-row fs-row-main">
         <OriginPicker value={form.from} onChange={(from) => update({ from })} />
         <AirportField label="To" value={form.to} onChange={(to) => update({ to })} />
         <label className="fs-field"><span>Departure</span>
@@ -309,7 +377,7 @@ function SearchBar({ form, setForm, onSearch, loading }) {
           <Icon className={loading ? "spin" : ""}>{loading ? "progress_activity" : "search"}</Icon>
           <span>{loading ? "Searching…" : "Search"}</span>
         </button>
-      </div>
+      </div>}
     </form>
   );
 }
@@ -500,7 +568,7 @@ function AirlineLogo({ src }) {
   return <span className="fs-logo">{src && !failed ? <img src={src} alt="" loading="lazy" onError={() => setFailed(true)} /> : <Icon>flight</Icon>}</span>;
 }
 
-function FlightCard({ flight, mode, onSelect, onBooking, bookingUrl, expanded, onToggle }) {
+function FlightCard({ flight, mode, priceLabel, finalLabel, onSelect, onBooking, bookingUrl, expanded, onToggle }) {
   const tight = flight.layovers.some((layover) => layover.duration < TIGHT_CONNECTION);
   const redEye = isRedEye(flight);
   return (
@@ -525,7 +593,7 @@ function FlightCard({ flight, mode, onSelect, onBooking, bookingUrl, expanded, o
         </div>
         <div className="fs-price">
           <strong>MYR {flight.price.toLocaleString()}</strong>
-          <small>{mode === "oneway" ? "one way" : "round trip"} · from {flight.origin}</small>
+          <small>{priceLabel} · from {flight.origin}</small>
         </div>
         <button type="button" className="fs-expand" onClick={onToggle} aria-expanded={expanded} aria-label={`${expanded ? "Hide" : "Show"} flight details`}><Icon>{expanded ? "expand_less" : "expand_more"}</Icon></button>
       </div>
@@ -552,10 +620,10 @@ function FlightCard({ flight, mode, onSelect, onBooking, bookingUrl, expanded, o
         ))}
       </ol>}
       <div className="fs-card-actions">
-        {mode === "round-outbound"
+        {mode === "select"
           ? <button type="button" className="fs-select-button" onClick={() => onSelect(flight)} disabled={!flight.departureToken}>Select flight<Icon>arrow_forward</Icon></button>
           : <>
-            {bookingUrl && <a className={flight.bookingToken ? "fs-secondary-link" : "fs-select-button"} href={bookingUrl} target="_blank" rel="noreferrer">{flight.bookingToken ? "Google Flights" : mode === "round-return" ? "Book this round trip" : "Book on Google Flights"}<Icon>open_in_new</Icon></a>}
+            {bookingUrl && <a className={flight.bookingToken ? "fs-secondary-link" : "fs-select-button"} href={bookingUrl} target="_blank" rel="noreferrer">{flight.bookingToken ? "Google Flights" : finalLabel}<Icon>open_in_new</Icon></a>}
             {flight.bookingToken && <button type="button" className="fs-select-button" onClick={() => onBooking(flight)}>See booking options <small>(1 search)</small><Icon>arrow_forward</Icon></button>}
           </>}
       </div>
@@ -740,13 +808,14 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
   const filters = useMemo(() => ({ ...DEFAULT_FLIGHT_FILTERS, ...storedFilters }), [storedFilters]);
   const [sort, setSort] = usePersistentState("flightSort", "best", undefined, (value) => value in SORTS);
   const [results, setResults] = useState(null);
-  const [outbound, setOutbound] = useState(null);
+  // Flights chosen so far (round trip: outbound; multi-city: earlier flights).
+  const [picks, setPicks] = useState([]);
   const [status, setStatus] = useState({ message: "", kind: "info" });
   const [loading, setLoading] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [booking, setBooking] = useState(null); // { flight, loading, data, error }
-  const outboundResults = useRef(null);
+  const stepResults = useRef([]); // results shown at each earlier step, for "Change"
   const [searched, setSearched] = useState(null); // the form behind the current results
   const [nearby, setNearby] = useState(null);
   const [nearbyLoading, setNearbyLoading] = useState(false);
@@ -756,12 +825,24 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
   const flights = useMemo(() => results?.flights || [], [results]);
   const facets = useMemo(() => flightFacets(flights), [flights]);
   const shown = useMemo(() => filterAndSortFlights(flights, filters, sort), [flights, filters, sort]);
-  const mode = form.trip === "oneway" ? "oneway" : outbound ? "round-return" : "round-outbound";
+  // Steps come from the search being shown, not the form being edited.
+  const trip = searched?.trip ?? form.trip;
+  const steps = trip === "multi" ? (searched?.segments?.length || 2) : trip === "round" ? 2 : 1;
+  const step = picks.length;
+  const mode = step < steps - 1 ? "select" : "final";
+  const priceLabel = trip === "multi" ? "whole trip" : trip === "round" ? "round trip" : "one way";
+  const finalLabel = trip === "oneway" ? "Book on Google Flights" : "Book this trip";
+  const segmentAt = (index) => searched?.segments?.[index];
 
   const runSearch = async (departureToken = "", fromOverride = null, searchForm = form) => {
-    if (!searchForm.to?.id) return setStatus({ message: "Choose where you are flying to.", kind: "error" });
-    if (!searchForm.depart) return setStatus({ message: "Choose a departure date.", kind: "error" });
-    if (searchForm.trip === "round" && !searchForm.return) return setStatus({ message: "Choose a return date, or switch to One way.", kind: "error" });
+    if (searchForm.trip === "multi") {
+      const incomplete = (searchForm.segments || []).findIndex((segment) => !segmentComplete(segment));
+      if (incomplete >= 0) return setStatus({ message: `Flight ${incomplete + 1}: choose both airports and a date.`, kind: "error" });
+    } else {
+      if (!searchForm.to?.id) return setStatus({ message: "Choose where you are flying to.", kind: "error" });
+      if (!searchForm.depart) return setStatus({ message: "Choose a departure date.", kind: "error" });
+      if (searchForm.trip === "round" && !searchForm.return) return setStatus({ message: "Choose a return date, or switch to One way.", kind: "error" });
+    }
     const params = flightQuery(searchForm);
     params.delete("toName");
     if (fromOverride) params.set("from", fromOverride);
@@ -770,13 +851,13 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
     const timeout = window.setTimeout(() => controller.abort(), 60000);
     setLoading(true);
     setExpandedId(null);
-    setStatus({ message: departureToken ? "Finding return flights…" : `Searching flights to ${searchForm.to.name}…`, kind: "info" });
+    setStatus({ message: departureToken ? "Loading options for the next flight…" : searchForm.trip === "multi" ? "Searching your multi-city trip…" : `Searching flights to ${searchForm.to.name}…`, kind: "info" });
     try {
       const response = await fetch(`/api/flights/search?${params}`, { signal: controller.signal });
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload) throw new Error(payload?.error || `Flight search returned ${response.status}.`);
       setResults(payload);
-      const found = `${payload.flights.length} ${payload.leg === "return" ? "return flights" : "flights"} found`;
+      const found = `${payload.flights.length} flights found`;
       setStatus({
         message: payload.message || `${found}${payload.warnings?.length ? " · one airport unavailable" : ""}.`,
         kind: payload.flights.length ? "success" : "error",
@@ -792,8 +873,8 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
   };
 
   const search = async (searchForm = form) => {
-    setOutbound(null);
-    outboundResults.current = null;
+    setPicks([]);
+    stepResults.current = [];
     setNearby(null);
     const payload = await runSearch("", null, searchForm);
     if (payload) {
@@ -833,7 +914,10 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
 
   // A shared link opens straight onto its results, like a Google Flights link.
   useEffect(() => {
-    if (LINKED_FORM?.depart && (LINKED_FORM.trip === "oneway" || LINKED_FORM.return)) search(LINKED_FORM);
+    const ready = LINKED_FORM?.trip === "multi"
+      ? LINKED_FORM.segments.every(segmentComplete)
+      : LINKED_FORM?.depart && (LINKED_FORM.trip === "oneway" || LINKED_FORM.return);
+    if (ready) search(LINKED_FORM);
     // Runs once on mount; LINKED_FORM never changes.
     // (search is recreated each render but only reads its argument here.)
   }, []);
@@ -842,7 +926,7 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
   useEffect(() => {
     // Leave a shared link in place until its own search has completed.
     if (window.location.protocol === "file:" || (!searched && LINKED_FORM)) return;
-    const params = searched?.to?.id ? flightQuery(searched) : new URLSearchParams();
+    const params = searched && (searched.trip === "multi" || searched.to?.id) ? flightQuery(searched) : new URLSearchParams();
     params.set("view", "flights");
     try {
       window.history.replaceState(null, "", `${window.location.pathname}?${params}`);
@@ -891,19 +975,24 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
     setForm(next);
     search(next);
   };
-  const selectOutbound = async (flight) => {
-    outboundResults.current = results;
-    const payload = await runSearch(flight.departureToken, flight.origin);
+  // Choosing a flight loads the options for the next one (return or next city).
+  const selectFlight = async (flight) => {
+    const atStep = picks.length;
+    stepResults.current[atStep] = results;
+    const payload = await runSearch(flight.departureToken, trip === "multi" ? null : flight.origin, searched);
     if (payload) {
-      setOutbound(flight);
+      setPicks((current) => [...current.slice(0, atStep), flight]);
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
   };
-  const changeOutbound = () => {
-    setOutbound(null);
-    setResults(outboundResults.current);
-    setStatus({ message: "Choose a different outbound flight.", kind: "info" });
+  // Go back to an earlier step; its results are kept, so this costs no search.
+  const changeAt = (index) => {
+    setPicks((current) => current.slice(0, index));
+    setResults(stepResults.current[index]);
+    stepResults.current = stepResults.current.slice(0, index);
+    setStatus({ message: "Choose a different flight.", kind: "info" });
   };
+  const pickLabel = (index) => (trip === "multi" ? `FLIGHT ${index + 1}` : index === 0 ? "OUTBOUND" : "RETURN");
 
   const openBooking = async (flight) => {
     if (!searched || !flight.bookingToken) return;
@@ -942,16 +1031,20 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
         <SearchBar form={form} setForm={setForm} onSearch={() => search()} loading={loading} />
         <p className={`live-status fs-status ${status.kind}`} role="status" aria-live="polite">{status.message}</p>
 
-        {outbound && <div className="fs-outbound">
-          <span className="eyebrow">YOUR OUTBOUND FLIGHT</span>
-          <p><b>{outbound.departTime} – {outbound.arriveTime}</b> · {outbound.from}–{outbound.to} · {outbound.airlines.join(", ")} · {formatDuration(outbound.totalDuration)} · {stopsText(outbound)}</p>
-          <button type="button" onClick={changeOutbound}><Icon>arrow_back</Icon>Change</button>
-        </div>}
+        {picks.map((pick, index) => (
+          <div className="fs-outbound" key={`${index}-${pick.id}`}>
+            <span className="eyebrow">{pickLabel(index)}</span>
+            <p><b>{pick.departTime} – {pick.arriveTime}</b> · {pick.from}–{pick.to} · {pick.departDate} · {pick.airlines.join(", ")} · {formatDuration(pick.totalDuration)} · {stopsText(pick)}</p>
+            <button type="button" onClick={() => changeAt(index)} disabled={loading}><Icon>arrow_back</Icon>Change</button>
+          </div>
+        ))}
 
         {results && <section className="fs-results" aria-label="Flight results">
           <div className="fs-results-head">
-            <h2>{mode === "round-return" ? "Choose a return flight" : mode === "round-outbound" ? "Choose an outbound flight" : "Flights"}{form.to?.name ? ` · ${form.to.name}` : ""}</h2>
-            {mode !== "round-return" && searched && <button type="button" className={`fs-track ${isTracked ? "active" : ""}`} aria-pressed={isTracked} onClick={toggleTrack}><Icon>{isTracked ? "notifications_active" : "notifications"}</Icon>{isTracked ? "Tracking price" : "Track this route"}</button>}
+            <h2>{trip === "multi"
+              ? `Flight ${step + 1} of ${steps}${segmentAt(step) ? ` · ${segmentAt(step).from?.id} → ${segmentAt(step).to?.id} · ${segmentAt(step).date}` : ""}`
+              : `${trip === "round" ? (step === 0 ? "Choose an outbound flight" : "Choose a return flight") : "Flights"}${searched?.to?.name ? ` · ${searched.to.name}` : ""}`}</h2>
+            {step === 0 && trip !== "multi" && searched && <button type="button" className={`fs-track ${isTracked ? "active" : ""}`} aria-pressed={isTracked} onClick={toggleTrack}><Icon>{isTracked ? "notifications_active" : "notifications"}</Icon>{isTracked ? "Tracking price" : "Track this route"}</button>}
             <div className="fs-sorts" role="group" aria-label="Sort flights">
               {Object.entries(SORTS).map(([key, { label }]) => (
                 <button type="button" key={key} className={sort === key ? "active" : ""} aria-pressed={sort === key} onClick={() => setSort(key)}>{label}</button>
@@ -959,8 +1052,8 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
             </div>
           </div>
           <PriceInsights insights={insights} cheapest={shown[0] && Math.min(...shown.map((flight) => flight.price))} />
-          {mode !== "round-return" && insights?.history?.length > 1 && <PriceHistory history={insights.history} typicalRange={insights.typicalRange} />}
-          {mode !== "round-return" && searched && <NearbyDates
+          {step === 0 && trip !== "multi" && insights?.history?.length > 1 && <PriceHistory history={insights.history} typicalRange={insights.typicalRange} />}
+          {step === 0 && trip !== "multi" && searched && <NearbyDates
             nearby={nearby}
             loading={nearbyLoading}
             searchesPerDate={originList(searched.from).length}
@@ -968,11 +1061,12 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
             onPick={pickNearby}
             roundTrip={searched.trip === "round"}
           />}
-          {mode !== "oneway" && <p className="fs-hint fs-price-note">Round-trip prices: each fare already includes a return flight, which you choose next.</p>}
+          {trip === "round" && <p className="fs-hint fs-price-note">Round-trip prices: each fare already includes a return flight{step === 0 ? ", which you choose next" : ""}.</p>}
+          {trip === "multi" && <p className="fs-hint fs-price-note">Multi-city prices: each fare is the total for the whole trip{mode === "select" ? ", including the flights you choose next" : ""}.</p>}
           {shown.length ? (
             <div className="fs-list">
               {shown.map((flight) => (
-                <FlightCard key={flight.id} flight={flight} mode={mode} onSelect={selectOutbound} onBooking={openBooking} bookingUrl={bookingUrlFor(flight)} expanded={expandedId === flight.id} onToggle={() => setExpandedId(expandedId === flight.id ? null : flight.id)} />
+                <FlightCard key={flight.id} flight={flight} mode={mode} priceLabel={priceLabel} finalLabel={finalLabel} onSelect={selectFlight} onBooking={openBooking} bookingUrl={bookingUrlFor(flight)} expanded={expandedId === flight.id} onToggle={() => setExpandedId(expandedId === flight.id ? null : flight.id)} />
               ))}
             </div>
           ) : (
