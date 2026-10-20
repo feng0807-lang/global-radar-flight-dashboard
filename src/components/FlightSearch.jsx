@@ -500,7 +500,7 @@ function AirlineLogo({ src }) {
   return <span className="fs-logo">{src && !failed ? <img src={src} alt="" loading="lazy" onError={() => setFailed(true)} /> : <Icon>flight</Icon>}</span>;
 }
 
-function FlightCard({ flight, mode, onSelect, bookingUrl, expanded, onToggle }) {
+function FlightCard({ flight, mode, onSelect, onBooking, bookingUrl, expanded, onToggle }) {
   const tight = flight.layovers.some((layover) => layover.duration < TIGHT_CONNECTION);
   const redEye = isRedEye(flight);
   return (
@@ -554,7 +554,10 @@ function FlightCard({ flight, mode, onSelect, bookingUrl, expanded, onToggle }) 
       <div className="fs-card-actions">
         {mode === "round-outbound"
           ? <button type="button" className="fs-select-button" onClick={() => onSelect(flight)} disabled={!flight.departureToken}>Select flight<Icon>arrow_forward</Icon></button>
-          : bookingUrl && <a className="fs-select-button" href={bookingUrl} target="_blank" rel="noreferrer">{mode === "round-return" ? "Book this round trip" : "Book on Google Flights"}<Icon>open_in_new</Icon></a>}
+          : <>
+            {bookingUrl && <a className={flight.bookingToken ? "fs-secondary-link" : "fs-select-button"} href={bookingUrl} target="_blank" rel="noreferrer">{flight.bookingToken ? "Google Flights" : mode === "round-return" ? "Book this round trip" : "Book on Google Flights"}<Icon>open_in_new</Icon></a>}
+            {flight.bookingToken && <button type="button" className="fs-select-button" onClick={() => onBooking(flight)}>See booking options <small>(1 search)</small><Icon>arrow_forward</Icon></button>}
+          </>}
       </div>
     </article>
   );
@@ -674,6 +677,62 @@ function NearbyDates({ nearby, loading, searchesPerDate, onCompare, onPick, roun
   );
 }
 
+// A hidden-field form that hands off to the seller through Google's booking
+// redirect (the server only passes https://*.google.com targets), in a new tab.
+function BookButton({ booking, seller }) {
+  if (!booking) return <span className="fs-book-unavailable">Booking link unavailable</span>;
+  return (
+    <form method="post" action={booking.url} target="_blank" rel="noreferrer">
+      {booking.fields.map(([name, value], index) => <input key={`${name}-${index}`} type="hidden" name={name} value={value} />)}
+      <button type="submit" className="fs-select-button">Book with {seller}<Icon>open_in_new</Icon></button>
+    </form>
+  );
+}
+
+function BookingPanel({ booking, onClose }) {
+  const { flight, loading, data, error } = booking;
+  return (
+    <Dialog className="route-drawer fs-booking" label="Booking options" onClose={onClose}>
+      <button className="drawer-close" onClick={onClose} aria-label="Close booking options"><Icon>close</Icon></button>
+      <div className="route-drawer-head">
+        <span className="eyebrow">WHERE TO BOOK</span>
+        <h2>{flight.from} → {flight.to} · {flight.airlines.join(", ")}</h2>
+        <p>{flight.departTime} – {flight.arriveTime} · {formatDuration(flight.totalDuration)} · {stopsText(flight)}</p>
+      </div>
+      {loading && <div className="route-loading"><Icon className="spin">progress_activity</Icon> Finding booking options…</div>}
+      {error && <p className="live-status error">{error}</p>}
+      {data && <>
+        {data.message && <p className="fs-hint">{data.message}</p>}
+        <ol className="fs-booking-list">
+          {data.options.map((option, index) => (
+            <li key={option.id} className={index === 0 && option.bookable ? "cheapest" : ""}>
+              <div className="fs-booking-top">
+                <strong>{option.parts.map((part) => part.seller).join(" + ")}</strong>
+                <b>{option.total === null ? "Price on site" : `MYR ${option.total.toLocaleString()}`}</b>
+              </div>
+              <div className="route-tags">
+                {index === 0 && option.bookable && <span className="tag best">Cheapest</span>}
+                {option.separateTickets && <span className="tag over">Separate tickets</span>}
+              </div>
+              {option.separateTickets && <p className="fs-hint">Booked as two tickets: if the first flight is delayed, the second airline does not have to rebook you. Allow extra connection time.</p>}
+              {option.parts.map((part) => (
+                <div className="fs-booking-part" key={part.label}>
+                  {option.parts.length > 1 && <p className="fs-booking-label">{part.label} · {part.seller}{part.price !== null ? ` · MYR ${part.price.toLocaleString()}` : ""}</p>}
+                  {(part.title || part.extensions.length > 0) && <p className="fs-leg-meta">{[part.title, ...part.extensions].filter(Boolean).join(" · ")}</p>}
+                  {part.baggage.length > 0 && <p className="fs-leg-meta fs-baggage"><Icon>luggage</Icon>{part.baggage.join(" · ")}</p>}
+                  {part.phone && <p className="fs-leg-meta">Phone booking: {part.phone}</p>}
+                  <BookButton booking={part.booking} seller={part.seller} />
+                </div>
+              ))}
+            </li>
+          ))}
+        </ol>
+        <p className="route-disclaimer"><Icon>info</Icon><span>Prices and conditions come from Google Flights at the time of this search. Check the final price, bag allowance, and fare rules on the seller's site before paying.{data.googleFlightsUrl && <> Or <a href={data.googleFlightsUrl} target="_blank" rel="noreferrer">compare on Google Flights</a>.</>}</span></p>
+      </>}
+    </Dialog>
+  );
+}
+
 export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
   const [form, setForm] = usePersistentState("flightSearchForm", { ...DEFAULT_FORM, from: defaultOrigin }, LINKED_FORM, validForm);
   const [storedFilters, setFilters] = usePersistentState("flightFilters", DEFAULT_FLIGHT_FILTERS, undefined, (value) => value && typeof value === "object" && Array.isArray(value.departWindow));
@@ -686,6 +745,7 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
   const [loading, setLoading] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [booking, setBooking] = useState(null); // { flight, loading, data, error }
   const outboundResults = useRef(null);
   const [searched, setSearched] = useState(null); // the form behind the current results
   const [nearby, setNearby] = useState(null);
@@ -845,6 +905,23 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
     setStatus({ message: "Choose a different outbound flight.", kind: "info" });
   };
 
+  const openBooking = async (flight) => {
+    if (!searched || !flight.bookingToken) return;
+    setBooking({ flight, loading: true, data: null, error: "" });
+    const params = flightQuery(searched);
+    params.delete("toName");
+    params.set("from", flight.origin);
+    params.set("bookingToken", flight.bookingToken);
+    try {
+      const response = await fetch(`/api/flights/booking?${params}`);
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload) throw new Error(payload?.error || `Booking options returned ${response.status}.`);
+      setBooking((current) => (current?.flight === flight ? { flight, loading: false, data: payload, error: "" } : current));
+    } catch (error) {
+      setBooking((current) => (current?.flight === flight ? { flight, loading: false, data: null, error: /failed to fetch|networkerror/i.test(error.message) ? "Flight API server is offline." : error.message } : current));
+    }
+  };
+
   const insights = results ? Object.values(results.byOrigin || {}).find((entry) => entry.priceInsights)?.priceInsights : null;
   const bookingUrlFor = (flight) => results?.byOrigin?.[flight.origin]?.googleFlightsUrl || "";
   const filterProps = { filters, setFilters, facets, total: flights.length, shown: shown.length, presets, setPresets };
@@ -855,6 +932,7 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
       {filtersOpen && <Dialog overlayClassName="mobile-overlay" label="Flight filters" onClose={() => setFiltersOpen(false)}>
         <FlightFilters {...filterProps} mobile close={() => setFiltersOpen(false)} />
       </Dialog>}
+      {booking && <BookingPanel booking={booking} onClose={() => setBooking(null)} />}
       <section className="workspace fs-workspace">
         <header className="topbar fs-topbar">
           {viewSwitch}
@@ -894,7 +972,7 @@ export function FlightSearchView({ viewSwitch, defaultOrigin = "ALL" }) {
           {shown.length ? (
             <div className="fs-list">
               {shown.map((flight) => (
-                <FlightCard key={flight.id} flight={flight} mode={mode} onSelect={selectOutbound} bookingUrl={bookingUrlFor(flight)} expanded={expandedId === flight.id} onToggle={() => setExpandedId(expandedId === flight.id ? null : flight.id)} />
+                <FlightCard key={flight.id} flight={flight} mode={mode} onSelect={selectOutbound} onBooking={openBooking} bookingUrl={bookingUrlFor(flight)} expanded={expandedId === flight.id} onToggle={() => setExpandedId(expandedId === flight.id ? null : flight.id)} />
               ))}
             </div>
           ) : (

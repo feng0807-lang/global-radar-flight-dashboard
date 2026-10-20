@@ -6,7 +6,7 @@ A modern flight-discovery dashboard for finding affordable worldwide trips from 
 
 ### Search flights (Google Flights-style)
 
-Switch to **Search flights** for a route search like Google Flights: from Penang, Kuala Lumpur, or up to three departure airports of your choice (for example adding Singapore or Johor Bahru, often cheaper for long-haul); any destination airport; round trip or one way; dates; adults, children, and lap infants; cabin class; and carry-on bags. Results show times, duration, stops and layovers, emissions, and price, with full leg-by-leg details. For round trips, pick an outbound flight, then choose its return and book on Google Flights.
+Switch to **Search flights** for a route search like Google Flights: from Penang, Kuala Lumpur, or up to three departure airports of your choice (for example adding Singapore or Johor Bahru, often cheaper for long-haul); any destination airport; round trip or one way; dates; adults, children, and lap infants; cabin class; and carry-on bags. Results show times, duration, stops and layovers, emissions, and price, with full leg-by-leg details. For round trips, pick an outbound flight, then choose its return. **See booking options** then lists where that exact itinerary can be bought (the airline and travel agents), cheapest first, with fare conditions, bag fees, and separate-ticket warnings, each with a Book button.
 
 Filters go further than Google Flights and apply instantly without spending extra searches:
 
