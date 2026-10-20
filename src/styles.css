@@ -599,3 +599,23 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
 .fs-preset-form input { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; background: #111c35; color: #eef4ff; padding: 6px 8px; font-size: 12px; }
 .fs-preset-form button { border: 0; border-radius: 8px; background: var(--teal); color: #071226; padding: 6px 10px; font-size: 11px; font-weight: 800; }
 .fs-preset-form button:disabled { opacity: .5; }
+
+/* Booking options */
+.fs-card-actions { gap: 10px; align-items: center; }
+.fs-select-button small { font-weight: 600; opacity: .75; }
+.fs-secondary-link { display: inline-flex; align-items: center; gap: 4px; color: var(--teal); font-size: 12px; font-weight: 700; text-decoration: none; }
+.fs-secondary-link .material-symbols-rounded { font-size: 15px; }
+.fs-booking { margin-left: auto; height: 100%; max-height: none; padding-bottom: 24px; animation: slide-in .25s ease-out; }
+.fs-booking-list { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 10px; }
+.fs-booking-list > li { padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: #0c1730; }
+.fs-booking-list > li.cheapest { border-color: var(--teal); }
+.fs-booking-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.fs-booking-top strong { font-size: 15px; }
+.fs-booking-top b { color: var(--gold); font: 700 19px "Barlow Condensed", sans-serif; white-space: nowrap; }
+.fs-booking-part { margin-top: 8px; display: grid; gap: 4px; justify-items: start; }
+.fs-booking-part form { margin: 4px 0 0; }
+.fs-booking-label { margin: 0; color: #dce5f8; font-size: 12px; font-weight: 700; }
+.fs-baggage { display: flex; align-items: center; gap: 5px; color: #cdd9f2 !important; }
+.fs-baggage .material-symbols-rounded { font-size: 14px; color: var(--teal); }
+.fs-book-unavailable { color: var(--muted); font-size: 11px; }
+.route-disclaimer a { color: var(--teal); }

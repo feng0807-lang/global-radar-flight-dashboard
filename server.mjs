@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { extname, join, normalize, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { allowedHostsFor, isAllowedHost, isCrossSiteRequest } from "./lib/requestGuard.mjs";
-import { CABINS, normalizeFlightResults, parseFlightSearch, serpApiFlightParams } from "./lib/flightSearch.mjs";
+import { CABINS, normalizeBookingOptions, normalizeFlightResults, parseFlightSearch, serpApiFlightParams } from "./lib/flightSearch.mjs";
 import { assembleRoutes, collapseDeals, daysBetween, durationGroupsFor, googleFlightsUrl, mapDestination, mapSpecificFlight, parsePrice } from "./lib/fares.mjs";
 
 const root = fileURLToPath(new URL("./dist", import.meta.url));
@@ -426,12 +426,37 @@ async function searchFlights(requestUrl, response) {
       priceInsights: result.priceInsights,
       googleFlightsUrl: safeGoogleFlightsUrl(result.googleFlightsUrl),
     }])),
-    query: { ...query, departureToken: query.departureToken ? "selected" : "", cabinName: CABINS[query.cabin] },
+    query: { ...query, departureToken: query.departureToken ? "selected" : "", bookingToken: "", cabinName: CABINS[query.cabin] },
     leg: query.departureToken ? "return" : "outbound",
     warnings: results.filter((result) => result.status === "rejected").map((result) => result.reason?.message),
     message: flights.length ? null : `No flights found from ${query.origins.join(" or ")} to ${query.to} on these dates. Try nearby dates or another cabin.`,
     retrievedAt: new Date().toISOString(),
     source: "SerpApi Google Flights",
+  });
+}
+
+// Where a chosen itinerary can be bought: sellers, prices, fare conditions, and
+// bag fees, from a flight's booking_token. One SerpApi search per lookup.
+async function bookingOptions(requestUrl, response) {
+  if (!apiKey) {
+    return sendJson(response, 503, { error: "Live API is ready, but SERPAPI_KEY has not been configured." });
+  }
+  const { query, error } = parseFlightSearch(requestUrl.searchParams);
+  if (error) return sendJson(response, 400, { error });
+  if (!query.bookingToken) return sendJson(response, 400, { error: "Choose a flight to see where to book it." });
+  const params = serpApiFlightParams(query, query.origins[0]);
+  params.set("api_key", apiKey);
+  const { ok, payload } = await fetchSerpApi(params, 30000);
+  if (!ok || !payload || payload.error) {
+    return sendJson(response, 502, { error: payload?.error || "Booking options are unavailable right now. Please try again." });
+  }
+  const options = normalizeBookingOptions(payload);
+  return sendJson(response, 200, {
+    options,
+    googleFlightsUrl: safeGoogleFlightsUrl(payload.search_metadata?.google_flights_url),
+    message: options.length ? null : "No booking options were returned for this flight. Try opening it on Google Flights.",
+    retrievedAt: new Date().toISOString(),
+    source: "SerpApi Google Flights booking options",
   });
 }
 
@@ -605,6 +630,7 @@ export const server = createServer(async (request, response) => {
     if (url.pathname === "/api/flights/explore") return await exploreFlights(url, response);
     if (url.pathname === "/api/flights/route") return await routeFinder(url, response);
     if (url.pathname === "/api/flights/search") return await searchFlights(url, response);
+    if (url.pathname === "/api/flights/booking") return await bookingOptions(url, response);
 
     const requested = url.pathname === "/" ? "/index.html" : url.pathname;
     const path = normalize(join(root, requested));
